@@ -1,27 +1,37 @@
-<?php
-$view = $this;
-$form = $this->form;
-?>
-
 <h2>Watermark Settings</h2>
 
-<?php echo $form->prepare(); ?>
 <form method="post">
     <div>
         <label for="watermark_portrait">Portrait Watermark:</label>
-        <?php echo $form->get('watermark_portrait')->render(); ?>
+        <select name="watermark_portrait">
+            <?php foreach ($assetOptions as $id => $name): ?>
+                <option value="<?= $id ?>" <?= ($id == $watermarkPortrait) ? 'selected' : '' ?>>
+                    <?= $name ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
     </div>
+
     <div>
         <label for="watermark_landscape">Landscape Watermark:</label>
-        <?php echo $form->get('watermark_landscape')->render(); ?>
+        <select name="watermark_landscape">
+            <?php foreach ($assetOptions as $id => $name): ?>
+                <option value="<?= $id ?>" <?= ($id == $watermarkLandscape) ? 'selected' : '' ?>>
+                    <?= $name ?>
+                </option>
+            <?php endforeach; ?>
+        </select>
     </div>
+
     <div>
         <label for="enable_watermarking">Enable Watermarking:</label>
-        <?php echo $form->get('enable_watermarking')->render(); ?>
+        <input type="checkbox" name="enable_watermarking" value="1" <?= $enableWatermarking ? 'checked' : '' ?>>
     </div>
+
     <div>
         <label for="reprocess_images">Reprocess Existing Images:</label>
-        <?php echo $form->get('reprocess_images')->render(); ?>
+        <button type="submit" name="reprocess_images" value="1">Reprocess Images</button>
     </div>
+
     <button type="submit">Save Changes</button>
 </form>
