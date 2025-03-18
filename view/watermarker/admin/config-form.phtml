@@ -4,8 +4,8 @@
     <div>
         <label for="watermark_portrait">Portrait Watermark:</label>
         <select name="watermark_portrait">
-            <?php foreach ($assetOptions as $id => $name): ?>
-                <option value="<?= $id ?>" <?= ($id == $watermarkPortrait) ? 'selected' : '' ?>>
+            <?php foreach ($this->assetOptions as $id => $name): ?>
+                <option value="<?= $id ?>" <?= ($id == $this->watermarkPortrait) ? 'selected' : '' ?>>
                     <?= $name ?>
                 </option>
             <?php endforeach; ?>
@@ -15,8 +15,8 @@
     <div>
         <label for="watermark_landscape">Landscape Watermark:</label>
         <select name="watermark_landscape">
-            <?php foreach ($assetOptions as $id => $name): ?>
-                <option value="<?= $id ?>" <?= ($id == $watermarkLandscape) ? 'selected' : '' ?>>
+            <?php foreach ($this->assetOptions as $id => $name): ?>
+                <option value="<?= $id ?>" <?= ($id == $this->watermarkLandscape) ? 'selected' : '' ?>>
                     <?= $name ?>
                 </option>
             <?php endforeach; ?>
@@ -25,7 +25,7 @@
 
     <div>
         <label for="enable_watermarking">Enable Watermarking:</label>
-        <input type="checkbox" name="enable_watermarking" value="1" <?= $enableWatermarking ? 'checked' : '' ?>>
+        <input type="checkbox" name="enable_watermarking" value="1" <?= $this->enableWatermarking ? 'checked' : '' ?>>
     </div>
 
     <div>
