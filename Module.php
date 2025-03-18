@@ -25,17 +25,24 @@ class Module extends AbstractModule
         $assetOptions = [];
 
         foreach ($assets as $asset) {
-            // Only add images (PNG, JPG, etc.)
             if (strpos($asset->mediaType(), 'image') !== false) {
                 $assetOptions[$asset->id()] = $asset->name();
             }
         }
+
+        // Create CSRF form element
+        $form = new \Laminas\Form\Form();
+        $form->add([
+            'name' => 'csrf',
+            'type' => 'Laminas\Form\Element\Csrf',
+        ]);
 
         return $renderer->render('watermarker/admin/config-form', [
             'assetOptions' => $assetOptions,
             'watermarkPortrait' => $this->getServiceLocator()->get('Omeka\Settings')->get('watermark_portrait'),
             'watermarkLandscape' => $this->getServiceLocator()->get('Omeka\Settings')->get('watermark_landscape'),
             'enableWatermarking' => $this->getServiceLocator()->get('Omeka\Settings')->get('enable_watermarking'),
+            'form' => $form, // Pass form object to view
         ]);
     }
 

@@ -1,8 +1,8 @@
 <h2>Watermark Settings</h2>
 
-<!-- Form tag with Omeka's built-in CSRF token -->
+<!-- Include CSRF Token Properly -->
 <form method="post">
-    <?= $this->csrfToken() ?> <!-- Add this line to include the CSRF token -->
+    <?php echo $this->formElement($this->form->get('csrf')); ?> <!-- Correct Omeka CSRF usage -->
 
     <div>
         <label for="watermark_portrait">Portrait Watermark:</label>
