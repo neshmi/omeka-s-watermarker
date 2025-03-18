@@ -45,6 +45,12 @@ class Module extends AbstractModule
         $request = $controller->getRequest();
 
         if ($request->isPost()) {
+            // Validate CSRF token
+            $csrfValidator = $controller->getServiceLocator()->get('Omeka\Form\Csrf');
+            if (!$csrfValidator->isValid($request->getPost('csrf'))) {
+                throw new \Exception("CSRF validation failed.");
+            }
+
             $postData = $request->getPost();
             $settings->set('watermark_portrait', $postData['watermark_portrait'] ?? null);
             $settings->set('watermark_landscape', $postData['watermark_landscape'] ?? null);
@@ -56,6 +62,7 @@ class Module extends AbstractModule
             }
         }
     }
+
 
     public function getServiceConfig()
     {
