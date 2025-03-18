@@ -1,0 +1,27 @@
+<?php
+$view = $this;
+$form = $this->form;
+?>
+
+<h2>Watermark Settings</h2>
+
+<?php echo $form->prepare(); ?>
+<form method="post">
+    <div>
+        <label for="watermark_portrait">Portrait Watermark:</label>
+        <?php echo $form->get('watermark_portrait')->render(); ?>
+    </div>
+    <div>
+        <label for="watermark_landscape">Landscape Watermark:</label>
+        <?php echo $form->get('watermark_landscape')->render(); ?>
+    </div>
+    <div>
+        <label for="enable_watermarking">Enable Watermarking:</label>
+        <?php echo $form->get('enable_watermarking')->render(); ?>
+    </div>
+    <div>
+        <label for="reprocess_images">Reprocess Existing Images:</label>
+        <?php echo $form->get('reprocess_images')->render(); ?>
+    </div>
+    <button type="submit">Save Changes</button>
+</form>
