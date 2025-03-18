@@ -1,6 +1,8 @@
-namespace WatermarkModule\Job;
+<?php
+namespace Watermarker\Job;
 
 use Omeka\Job\AbstractJob;
+use Omeka\Api\Manager as ApiManager;
 
 class ReprocessImages extends AbstractJob
 {
@@ -9,7 +11,7 @@ class ReprocessImages extends AbstractJob
         $api = $this->getServiceLocator()->get('Omeka\ApiManager');
         $files = $api->search('files')->getContent();
 
-        $watermarkModule = new \WatermarkModule\Module();
+        $watermarkModule = new \Watermarker\Module();
 
         foreach ($files as $file) {
             $filepath = $file->getStoragePath();
