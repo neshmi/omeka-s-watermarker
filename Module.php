@@ -18,7 +18,25 @@ class Module extends AbstractModule
 
     public function getConfigForm(PhpRenderer $renderer)
     {
-        return $renderer->render('watermarker/admin/config-form');
+        $api = $this->getServiceLocator()->get('Omeka\ApiManager');
+
+        // Fetch all assets
+        $assets = $api->search('assets')->getContent();
+        $assetOptions = [];
+
+        foreach ($assets as $asset) {
+            // Only add images (PNG, JPG, etc.)
+            if (strpos($asset->mediaType(), 'image') !== false) {
+                $assetOptions[$asset->id()] = $asset->name();
+            }
+        }
+
+        return $renderer->render('watermarker/admin/config-form', [
+            'assetOptions' => $assetOptions,
+            'watermarkPortrait' => $this->getServiceLocator()->get('Omeka\Settings')->get('watermark_portrait'),
+            'watermarkLandscape' => $this->getServiceLocator()->get('Omeka\Settings')->get('watermark_landscape'),
+            'enableWatermarking' => $this->getServiceLocator()->get('Omeka\Settings')->get('enable_watermarking'),
+        ]);
     }
 
     public function handleConfigForm(AbstractController $controller)
