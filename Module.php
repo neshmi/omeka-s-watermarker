@@ -24,6 +24,26 @@ class Module extends AbstractModule
      * @var ServiceLocatorInterface
      */
     protected $serviceLocator;
+    
+    /**
+     * @var object Track uploaded temp file for later processing
+     */
+    protected $tempFileUploaded = null;
+    
+    /**
+     * @var bool Track whether derivatives have been created
+     */
+    protected $derivativesCreated = false;
+    
+    /**
+     * @var array Information about the last stored file
+     */
+    protected $lastStoredFile = null;
+    
+    /**
+     * @var int ID of the last hydrated media entity
+     */
+    protected $lastHydratedMediaId = null;
 
     /**
      * Get module configuration.
@@ -80,7 +100,6 @@ class Module extends AbstractModule
     public function attachListeners(SharedEventManagerInterface $sharedEventManager)
     {
         $logger = $this->getServiceLocator()->get('Omeka\Logger');
-        $logger->info('Watermarker: Attaching event listeners');
 
         // Listen for media creation and update events to apply watermarks
         $sharedEventManager->attach(
@@ -107,6 +126,27 @@ class Module extends AbstractModule
             'Omeka\Api\Adapter\MediaAdapter',
             'api.hydrate.post',
             [$this, 'handleMediaHydrated']
+        );
+        
+        // Listen specifically for file uploads
+        $sharedEventManager->attach(
+            'Omeka\File\Ingester\Upload',
+            'upload.post',
+            [$this, 'handleMediaUploaded']
+        );
+        
+        // Also listen to derivative creation events
+        $sharedEventManager->attach(
+            'Omeka\File\TempFileFactory',
+            'create_derivatives.post',
+            [$this, 'handleDerivativesCreated']
+        );
+        
+        // Listen to the stored event on the File/Store adapter
+        $sharedEventManager->attach(
+            'Omeka\File\Store\Filesystem',
+            'store.post',
+            [$this, 'handleFileStored']
         );
 
         // Add link to admin navigation
@@ -157,51 +197,8 @@ class Module extends AbstractModule
      */
     public function handleMediaCreated(Event $event)
     {
-        $logger = $this->getServiceLocator()->get('Omeka\Logger');
-        $logger->info('Watermarker: handleMediaCreated called');
-
-        $media = $event->getParam('response')->getContent();
-        $settings = $this->getServiceLocator()->get('Omeka\Settings');
-
-        // Check if watermarking is enabled and should be applied on upload
-        if (!$settings->get('watermarker_enabled', true)) {
-            $logger->info('Watermarker: Watermarking is disabled globally');
-            return;
-        }
-
-        if (!$settings->get('watermarker_apply_on_upload', true)) {
-            $logger->info('Watermarker: Watermarking on upload is disabled');
-            return;
-        }
-
-        $logger->info(sprintf(
-            'Watermarker: Processing media ID %s for watermarking',
-            $media->id()
-        ));
-
-        // Check if we have any watermarks configured
-        $connection = $this->getServiceLocator()->get('Omeka\Connection');
-        $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
-        $count = (int)$stmt->fetchColumn();
-
-        if ($count === 0) {
-            $logger->info('Watermarker: No active watermark configurations found');
-            return;
-        }
-
-        $logger->info(sprintf(
-            'Watermarker: Found %d active watermark configurations',
-            $count
-        ));
-        
-        // Directly process the media for watermarking (no job system)
-        // Using a small delay via the isNewUpload flag to allow derivatives to be generated
-        $result = $this->watermarkService()->processMedia($media, true);
-        
-        $logger->info(sprintf(
-            'Watermarker: Media processing %s',
-            $result ? 'successful' : 'failed'
-        ));
+        // This event is no longer the primary handler for watermarking
+        // We rely on the handleMediaPersisted event instead to avoid timing issues
     }
 
     /**
@@ -211,15 +208,8 @@ class Module extends AbstractModule
      */
     public function handleMediaUpdated(Event $event)
     {
-        $media = $event->getParam('response')->getContent();
-        $settings = $this->getServiceLocator()->get('Omeka\Settings');
-
-        // Check if watermarking is enabled
-        if (!$settings->get('watermarker_enabled', true)) {
-            return;
-        }
-
-        $this->watermarkService()->processMedia($media);
+        // Media updates may need re-watermarking but we use the same
+        // approach as for new uploads - the persisted event will handle it
     }
 
     /**
@@ -229,77 +219,7 @@ class Module extends AbstractModule
      */
     public function handleMediaHydrated(Event $event)
     {
-        $logger = $this->getServiceLocator()->get('Omeka\Logger');
-        $logger->info('Watermarker: handleMediaHydrated called');
-
-        // Get the request and entity from the event
-        $entity = $event->getParam('entity');
-        $request = $event->getParam('request');
-
-        if (!$entity) {
-            $logger->info('Watermarker: No entity in hydration event');
-            return;
-        }
-
-        // Only process on create operations
-        if ($request && $request->getOperation() !== 'create') {
-            $logger->info('Watermarker: Skipping non-create operation: ' . $request->getOperation());
-            return;
-        }
-
-        // Get the media representation
-        try {
-            $api = $this->getServiceLocator()->get('Omeka\ApiManager');
-            $media = $api->read('media', $entity->getId())->getContent();
-
-            $logger->info(sprintf(
-                'Watermarker: Processing hydrated media ID %s, type %s',
-                $media->id(),
-                $media->mediaType()
-            ));
-
-            $settings = $this->getServiceLocator()->get('Omeka\Settings');
-
-            // Check if watermarking is enabled
-            if (!$settings->get('watermarker_enabled', true)) {
-                $logger->info('Watermarker: Watermarking is disabled globally');
-                return;
-            }
-
-            if (!$settings->get('watermarker_apply_on_upload', true)) {
-                $logger->info('Watermarker: Watermarking on upload is disabled');
-                return;
-            }
-
-            // Check if we have any watermarks configured
-            $connection = $this->getServiceLocator()->get('Omeka\Connection');
-            $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
-            $count = (int)$stmt->fetchColumn();
-
-            if ($count === 0) {
-                $logger->info('Watermarker: No active watermark configurations found');
-                return;
-            }
-
-            $logger->info(sprintf(
-                'Watermarker: Found %d active watermark configurations',
-                $count
-            ));
-
-            // Directly process the media for watermarking (no job system)
-            // Using a small delay via the isNewUpload flag to allow derivatives to be generated
-            $result = $this->watermarkService()->processMedia($media, true);
-            
-            $logger->info(sprintf(
-                'Watermarker: Media processing in handleMediaHydrated %s',
-                $result ? 'successful' : 'failed'
-            ));
-        } catch (\Exception $e) {
-            $logger->err(sprintf(
-                'Watermarker: Error processing hydrated media: %s',
-                $e->getMessage()
-            ));
-        }
+        // This event is no longer needed as we use the persisted event
     }
 
     /**
@@ -310,70 +230,91 @@ class Module extends AbstractModule
     public function handleMediaPersisted(Event $event)
     {
         $logger = $this->getServiceLocator()->get('Omeka\Logger');
-        $logger->info('Watermarker: handleMediaPersisted called');
-
+        
         // Get the entity from the event
         $entity = $event->getTarget();
-
+        
         if (!$entity) {
-            $logger->info('Watermarker: No entity in persistence event');
             return;
         }
-
-        $logger->info(sprintf(
-            'Watermarker: Processing persisted media ID %s',
-            $entity->getId()
-        ));
-
+        
         $settings = $this->getServiceLocator()->get('Omeka\Settings');
-
+        
         // Check if watermarking is enabled
         if (!$settings->get('watermarker_enabled', true)) {
-            $logger->info('Watermarker: Watermarking is disabled globally');
             return;
         }
-
+        
         if (!$settings->get('watermarker_apply_on_upload', true)) {
-            $logger->info('Watermarker: Watermarking on upload is disabled');
             return;
         }
-
-        // Check if we have any watermarks configured
-        $connection = $this->getServiceLocator()->get('Omeka\Connection');
-        $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
-        $count = (int)$stmt->fetchColumn();
-
-        if ($count === 0) {
-            $logger->info('Watermarker: No active watermark configurations found');
-            return;
-        }
-
-        $logger->info(sprintf(
-            'Watermarker: Found %d active watermark configurations',
-            $count
-        ));
-
-        // Get media representation for the entity
-        try {
-            $api = $this->getServiceLocator()->get('Omeka\ApiManager');
-            $media = $api->read('media', $entity->getId())->getContent();
-
-            // Directly process the media for watermarking (no job system)
-            // Using a small delay via the isNewUpload flag to allow derivatives to be generated
-            $result = $this->watermarkService()->processMedia($media, true);
+        
+        // This is the MOST RELIABLE point to apply watermarks!
+        // Schedule watermarking to run after the response is sent
+        register_shutdown_function(function() use ($entity, $logger) {
+            // Wait for derivatives to be generated
+            sleep(10);
             
-            $logger->info(sprintf(
-                'Watermarker: Media processing in handleMediaPersisted %s',
-                $result ? 'successful' : 'failed'
-            ));
-        } catch (\Exception $e) {
-            $logger->err(sprintf(
-                'Watermarker: Error processing persisted media: %s',
-                $e->getMessage()
-            ));
-        }
+            try {
+                // Get the API manager and watermark service
+                $api = $this->getServiceLocator()->get('Omeka\ApiManager');
+                $connection = $this->getServiceLocator()->get('Omeka\Connection');
+                $watermarkService = $this->watermarkService();
+                
+                // Get the media representation
+                $media = $api->read('media', $entity->getId())->getContent();
+                
+                // Get the first available watermark
+                $sql = "SELECT * FROM watermark_setting WHERE enabled = 1 ORDER BY id ASC LIMIT 1";
+                $watermarkConfig = $connection->fetchAssoc($sql);
+                
+                if (!$watermarkConfig) {
+                    return;
+                }
+                
+                // Apply the watermark directly
+                $watermarkService->applyWatermarkDirectly($media, $watermarkConfig);
+            } catch (\Exception $e) {
+                $logger->err(sprintf(
+                    'Watermarker: Error in watermarking: %s',
+                    $e->getMessage()
+                ));
+            }
+        });
     }
 
+    /**
+     * Handle media upload event
+     *
+     * @param Event $event
+     */
+    public function handleMediaUploaded(Event $event)
+    {
+        // No longer needed as we use the persisted event
+    }
+    
+    /**
+     * Handle derivatives created event
+     *
+     * @param Event $event
+     */
+    public function handleDerivativesCreated(Event $event)
+    {
+        // No longer needed as we use the persisted event
+    }
+    
+    /**
+     * Handle file stored event
+     * 
+     * This is triggered after a file is stored in the filesystem
+     *
+     * @param Event $event
+     */
+    public function handleFileStored(Event $event)
+    {
+        // No longer needed as we use the persisted event
+    }
+    
     /**
      * Get the watermark service
      *

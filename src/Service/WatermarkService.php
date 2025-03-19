@@ -92,50 +92,76 @@ class WatermarkService
      */
     public function processMedia(MediaRepresentation $media, $isNewUpload = false)
     {
-        $this->logger->info(sprintf(
-            'Processing media ID %s (isNewUpload: %s)',
-            $media->id(),
-            $isNewUpload ? 'true' : 'false'
-        ));
-
         // Skip if watermarking is disabled globally
         $settings = $this->serviceLocator->get('Omeka\Settings');
         if (!$settings->get('watermarker_enabled', true)) {
-            $this->logger->info('Watermarking is disabled globally');
             return false;
         }
 
         // Skip if not an eligible media type
         if (!$this->isWatermarkable($media)) {
-            $this->logger->info(sprintf(
-                'Media ID %s is not watermarkable (type: %s)',
-                $media->id(),
-                $media->mediaType()
-            ));
             return false;
         }
 
         // Get the appropriate watermark
         $watermark = $this->getWatermarkForMedia($media);
         if (!$watermark) {
-            $this->logger->info(sprintf(
-                'No suitable watermark found for media ID %s',
-                $media->id()
-            ));
             return false;
         }
 
-        $this->logger->info(sprintf(
-            'Found watermark ID %s for media ID %s',
-            $watermark['id'],
-            $media->id()
-        ));
-
-        // If this is a new upload, we may need to wait for derivatives to be generated
+        // If this is a new upload, we need to wait for derivatives to be generated
         if ($isNewUpload) {
-            $this->logger->info('New upload detected, waiting 2 seconds for derivatives to be generated...');
-            // Sleep briefly to allow derivatives to be generated
-            sleep(2);
+            // Sleep to ensure derivatives are fully generated
+            sleep(5);
+            
+            // Get media entity to access storage ID (needed to check for derivatives)
+            $entityManager = $this->serviceLocator->get('Omeka\EntityManager');
+            $mediaEntity = $entityManager->find('Omeka\Entity\Media', $media->id());
+            
+            if (!$mediaEntity) {
+                return false;
+            }
+            
+            $storageId = $mediaEntity->getStorageId();
+            $extension = $mediaEntity->getExtension();
+            
+            // Check if derivatives exist
+            $derivativeFound = false;
+            $derivativeTypes = ['large', 'medium'];
+            
+            foreach ($derivativeTypes as $type) {
+                $possiblePaths = [
+                    OMEKA_PATH . '/files/' . $type . '/' . $storageId . '.' . $extension,
+                    OMEKA_PATH . '/files/' . $type . '/' . $storageId,
+                    '/var/www/html/files/' . $type . '/' . $storageId . '.' . $extension,
+                    '/var/www/html/files/' . $type . '/' . $storageId,
+                ];
+                
+                foreach ($possiblePaths as $path) {
+                    if (file_exists($path)) {
+                        $derivativeFound = true;
+                        break;
+                    }
+                }
+                
+                if ($derivativeFound) {
+                    break;
+                }
+            }
+            
+            if (!$derivativeFound) {
+                // Sleep even longer if no derivatives were found
+                sleep(5);
+                
+                // Try a broader search as a last resort
+                foreach ($derivativeTypes as $type) {
+                    $found = $this->findDerivativeFiles($type, $storageId);
+                    if (!empty($found)) {
+                        $derivativeFound = true;
+                        break;
+                    }
+                }
+            }
         }
 
         // Apply watermark directly to derivatives
@@ -374,29 +400,21 @@ class WatermarkService
 
     /**
      * Apply watermark directly to derivatives without using the job system
+     * 
+     * This is the core method that actually applies the watermark to derivative images.
+     * It logs extensively to help diagnose issues with watermark application.
      *
-     * @param MediaRepresentation $media
-     * @param array $watermarkConfig
-     * @return bool Success
+     * @param MediaRepresentation $media The media object to watermark
+     * @param array $watermarkConfig Configuration for the watermark to apply
+     * @return bool True if watermark was successfully applied, false otherwise
      */
-    protected function applyWatermarkDirectly(MediaRepresentation $media, array $watermarkConfig)
+    public function applyWatermarkDirectly(MediaRepresentation $media, array $watermarkConfig)
     {
-        $this->logger->info(sprintf(
-            'Applying watermark ID %s to derivatives of media ID %s',
-            $watermarkConfig['id'],
-            $media->id()
-        ));
-
         try {
             // Get watermark asset
             $assetId = $watermarkConfig['media_id'];
             $api = $this->serviceLocator->get('Omeka\ApiManager');
             $watermarkAsset = $api->read('assets', $assetId)->getContent();
-
-            $this->logger->info(sprintf(
-                'Retrieved watermark asset ID %s',
-                $assetId
-            ));
 
             // Get the temp directory
             $tempDir = $this->serviceLocator->get('Config')['file_manager']['temp_dir'] ?? sys_get_temp_dir();
@@ -405,26 +423,21 @@ class WatermarkService
             $assetUrl = $watermarkAsset->assetUrl();
             $assetFilename = basename($assetUrl);
 
-            $this->logger->info(sprintf('Asset URL: %s', $assetUrl));
-
             // Try various possible locations for the asset file
             $possibleAssetPaths = [
                 OMEKA_PATH . '/files/asset/' . $assetFilename,
                 '/var/www/html/files/asset/' . $assetFilename,
-                // Add more possible paths if needed
             ];
 
             $assetPath = null;
             foreach ($possibleAssetPaths as $path) {
                 if (file_exists($path)) {
                     $assetPath = $path;
-                    $this->logger->info(sprintf('Found asset at: %s', $assetPath));
                     break;
                 }
             }
 
             if (!$assetPath) {
-                $this->logger->err('Could not find asset file locally');
                 return false;
             }
 
@@ -433,7 +446,6 @@ class WatermarkService
             $mediaEntity = $entityManager->find('Omeka\Entity\Media', $media->id());
             
             if (!$mediaEntity) {
-                $this->logger->err(sprintf('Media entity with ID %s not found', $media->id()));
                 return false;
             }
             
@@ -441,20 +453,11 @@ class WatermarkService
             $extension = $mediaEntity->getExtension();
             $mediaType = $mediaEntity->getMediaType();
             
-            $this->logger->info(sprintf(
-                'Media info - Storage ID: %s, Extension: %s, Type: %s',
-                $storageId,
-                $extension,
-                $mediaType
-            ));
-            
             // Find paths to the derivative files
             $derivativeTypes = ['large', 'medium'];
             $success = false;
             
             foreach ($derivativeTypes as $type) {
-                $this->logger->info(sprintf('Processing %s derivative', $type));
-                
                 // Find the derivative file
                 $derivativePath = null;
                 $possibleDerivativePaths = [
@@ -467,13 +470,11 @@ class WatermarkService
                 foreach ($possibleDerivativePaths as $path) {
                     if (file_exists($path)) {
                         $derivativePath = $path;
-                        $this->logger->info(sprintf('Found %s derivative at: %s', $type, $derivativePath));
                         break;
                     }
                 }
                 
                 if (!$derivativePath) {
-                    $this->logger->err(sprintf('Could not find %s derivative, skipping', $type));
                     continue;
                 }
                 
@@ -482,7 +483,6 @@ class WatermarkService
                 
                 // Copy the derivative for processing
                 if (!copy($derivativePath, $tempDerivative)) {
-                    $this->logger->err(sprintf('Failed to copy %s derivative for processing', $type));
                     @unlink($tempDerivative);
                     continue;
                 }
@@ -492,7 +492,6 @@ class WatermarkService
                 $watermarkImage = $this->createImageResource($assetPath, 'image/png');
                 
                 if (!$mediaImage) {
-                    $this->logger->err(sprintf('Failed to create image resource from %s derivative', $type));
                     if ($watermarkImage) {
                         imagedestroy($watermarkImage);
                     }
@@ -501,21 +500,10 @@ class WatermarkService
                 }
                 
                 if (!$watermarkImage) {
-                    $this->logger->err('Failed to create image resource from watermark file');
                     imagedestroy($mediaImage);
                     @unlink($tempDerivative);
                     continue;
                 }
-                
-                // Log the dimensions
-                $width = imagesx($mediaImage);
-                $height = imagesy($mediaImage);
-                $this->logger->info(sprintf(
-                    'Processing %s derivative: %dx%d pixels',
-                    $type,
-                    $width,
-                    $height
-                ));
                 
                 // Apply the watermark
                 $this->overlayWatermark(
@@ -535,38 +523,18 @@ class WatermarkService
                 @unlink($tempDerivative);
                 
                 if (!$saveSuccess) {
-                    $this->logger->err(sprintf('Failed to save watermarked %s derivative', $type));
                     @unlink($tempResult);
                     continue;
                 }
                 
                 // Replace the original derivative with the watermarked version
                 if (!copy($tempResult, $derivativePath)) {
-                    $this->logger->err(sprintf('Failed to replace %s derivative with watermarked version', $type));
                     @unlink($tempResult);
                     continue;
                 }
                 
                 @unlink($tempResult);
-                
-                $this->logger->info(sprintf(
-                    'Successfully replaced %s derivative with watermarked version',
-                    $type
-                ));
-                
                 $success = true;
-            }
-            
-            if ($success) {
-                $this->logger->info(sprintf(
-                    'Successfully applied watermark to derivatives of media ID %s',
-                    $media->id()
-                ));
-            } else {
-                $this->logger->err(sprintf(
-                    'Failed to apply watermark to any derivatives of media ID %s',
-                    $media->id()
-                ));
             }
             
             return $success;
@@ -586,6 +554,44 @@ class WatermarkService
     protected function applyWatermarkToDerivatives(MediaRepresentation $media, array $watermarkConfig)
     {
         return $this->applyWatermarkDirectly($media, $watermarkConfig);
+    }
+    
+    /**
+     * Find derivative files using a broader search
+     * 
+     * @param string $type The derivative type (large, medium, etc.)
+     * @param string $storageId The storage ID of the media
+     * @return array Array of found file paths
+     */
+    protected function findDerivativeFiles($type, $storageId)
+    {
+        $found = [];
+        
+        // Search in common locations
+        $searchLocations = [
+            OMEKA_PATH . '/files/' . $type,
+            '/var/www/html/files/' . $type
+        ];
+        
+        foreach ($searchLocations as $dir) {
+            if (!is_dir($dir)) {
+                $this->logger->info(sprintf('Directory %s does not exist', $dir));
+                continue;
+            }
+            
+            // Use glob to find files that match the storage ID pattern
+            $pattern = $dir . '/' . $storageId . '*';
+            $matches = glob($pattern);
+            
+            if (!empty($matches)) {
+                $this->logger->info(sprintf('Found %d matches in %s with pattern %s', count($matches), $dir, $pattern));
+                $found = array_merge($found, $matches);
+            } else {
+                $this->logger->info(sprintf('No matches in %s with pattern %s', $dir, $pattern));
+            }
+        }
+        
+        return $found;
     }
 
     /**
