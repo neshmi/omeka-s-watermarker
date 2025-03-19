@@ -59,6 +59,9 @@ return [
         'factories' => [
             'Watermarker\WatermarkService' => Service\WatermarkServiceFactory::class,
         ],
+        'aliases' => [
+            'Watermarker\TempFileFactory' => 'Omeka\File\TempFileFactory',
+        ],
     ],
     'translator' => [
         'translation_file_patterns' => [

@@ -1,4 +1,81 @@
-<?php
+/**
+     * Handle media hydration event - another opportunity to apply watermarks
+     *
+     * @param Event $event
+     */
+    public function handleMediaHydrated(Event $event)
+    {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: handleMediaHydrated called');
+
+        // Get the request and entity from the event
+        $entity = $event->getParam('entity');
+        $request = $event->getParam('request');
+
+        if (!$entity) {
+            $logger->info('Watermarker: No entity in hydration event');
+            return;
+        }
+
+        // Only process on create operations
+        if ($request && $request->getOperation() !== 'create') {
+            $logger->info('Watermarker: Skipping non-create operation: ' . $request->getOperation());
+            return;
+        }
+
+        // Get the media representation
+        try {
+            $api = $this->getServiceLocator()->get('Omeka\ApiManager');
+            $media = $api->read('media', $entity->getId())->getContent();
+
+            $logger->info(sprintf(
+                'Watermarker: Processing hydrated media ID %s, type %s',
+                $media->id(),
+                $media->mediaType()
+            ));
+
+            $settings = $this->getServiceLocator()->get('Omeka\Settings');
+
+            // Check if watermarking is enabled
+            if (!$settings->get('watermarker_enabled', true)) {
+                $logger->info('Watermarker: Watermarking is disabled globally');
+                return;
+            }
+
+            if (!$settings->get('watermarker_apply_on_upload', true)) {
+                $logger->info('Watermarker: Watermarking on upload is disabled');
+                return;
+            }
+
+            // Check if we have any watermarks configured
+            $connection = $this->getServiceLocator()->get('Omeka\Connection');
+            $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
+            $count = (int)$stmt->fetchColumn();
+
+            if ($count === 0) {
+                $logger->info('Watermarker: No active watermark configurations found');
+                return;
+            }
+
+            $logger->info(sprintf(
+                'Watermarker: Found %d active watermark configurations',
+                $count
+            ));
+
+            // Process the media
+            $result = $this->watermarkService()->processMedia($media);
+
+            $logger->info(sprintf(
+                'Watermarker: Media processing %s',
+                $result ? 'successful' : 'failed'
+            ));
+        } catch (\Exception $e) {
+            $logger->err(sprintf(
+                'Watermarker: Error processing hydrated media: %s',
+                $e->getMessage()
+            ));
+        }
+    }<?php
 /**
  * Watermarker
  *
@@ -20,7 +97,10 @@ use Omeka\Api\Representation\MediaRepresentation;
 
 class Module extends AbstractModule
 {
-    /** Module body */
+    /**
+     * @var ServiceLocatorInterface
+     */
+    protected $serviceLocator;
 
     /**
      * Get module configuration.
@@ -76,6 +156,9 @@ class Module extends AbstractModule
      */
     public function attachListeners(SharedEventManagerInterface $sharedEventManager)
     {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: Attaching event listeners');
+
         // Listen for media creation and update events to apply watermarks
         $sharedEventManager->attach(
             'Omeka\Api\Adapter\MediaAdapter',
@@ -89,11 +172,54 @@ class Module extends AbstractModule
             [$this, 'handleMediaUpdated']
         );
 
+        // Also listen to hydrate.post for existing items
+        $sharedEventManager->attach(
+            'Omeka\Api\Adapter\MediaAdapter',
+            'api.hydrate.post',
+            [$this, 'handleMediaHydrated']
+        );
+
         // Add link to admin navigation
         $sharedEventManager->attach(
             'Omeka\Controller\Admin\Index',
             'view.layout',
             [$this, 'addAdminNavigation']
+        );
+
+        // Debug event to log when module events are triggered
+        $sharedEventManager->attach(
+            'Omeka\Api\Adapter\MediaAdapter',
+            '*',
+            function (Event $event) {
+                $logger = $this->getServiceLocator()->get('Omeka\Logger');
+                $logger->info(sprintf(
+                    'Watermarker: Event "%s" triggered',
+                    $event->getName()
+                ));
+
+                // For create and update events, log more details
+                if (in_array($event->getName(), ['api.create.post', 'api.update.post', 'api.hydrate.post'])) {
+                    $response = $event->getParam('response');
+                    $request = $event->getParam('request');
+
+                    if ($response) {
+                        $media = $response->getContent();
+                        $logger->info(sprintf(
+                            'Watermarker: Event has media ID %s with type %s',
+                            $media ? $media->id() : 'unknown',
+                            $media ? $media->mediaType() : 'unknown'
+                        ));
+                    }
+
+                    if ($request) {
+                        $logger->info(sprintf(
+                            'Watermarker: Request operation: %s, resource: %s',
+                            $request->getOperation(),
+                            $request->getResource()
+                        ));
+                    }
+                }
+            }
         );
     }
 
@@ -439,7 +565,10 @@ class Module extends AbstractModule
         }
 
         $formData = $form->getData();
-        $this->setConfig($formData);
+        $settings = $this->getServiceLocator()->get('Omeka\Settings');
+        $settings->set('watermarker_enabled', isset($formData['watermark_enabled']));
+        $settings->set('watermarker_apply_on_upload', isset($formData['apply_on_upload']));
+        $settings->set('watermarker_apply_on_import', isset($formData['apply_on_import']));
 
         return true;
     }

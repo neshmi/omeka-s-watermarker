@@ -18,7 +18,8 @@ class IndexController extends AbstractActionController
      */
     public function indexAction()
     {
-        $connection = $this->connection();
+        $services = $this->getEvent()->getApplication()->getServiceManager();
+        $connection = $services->get('Omeka\Connection');
         $stmt = $connection->query("SELECT * FROM watermark_setting ORDER BY id ASC");
         $watermarks = $stmt->fetchAll();
 
@@ -40,7 +41,8 @@ class IndexController extends AbstractActionController
 
             if ($form->isValid()) {
                 $formData = $form->getData();
-                $connection = $this->connection();
+                $services = $this->getEvent()->getApplication()->getServiceManager();
+                $connection = $services->get('Omeka\Connection');
 
                 $sql = "INSERT INTO watermark_setting (name, media_id, orientation, position, opacity, enabled, created)
                         VALUES (:name, :media_id, :orientation, :position, :opacity, :enabled, :created)";
@@ -73,7 +75,8 @@ class IndexController extends AbstractActionController
     public function editAction()
     {
         $id = $this->params('id');
-        $connection = $this->connection();
+        $services = $this->getEvent()->getApplication()->getServiceManager();
+        $connection = $services->get('Omeka\Connection');
 
         // Get watermark data
         $sql = "SELECT * FROM watermark_setting WHERE id = :id LIMIT 1";
@@ -145,7 +148,8 @@ class IndexController extends AbstractActionController
     public function deleteAction()
     {
         $id = $this->params('id');
-        $connection = $this->connection();
+        $services = $this->getEvent()->getApplication()->getServiceManager();
+        $connection = $services->get('Omeka\Connection');
 
         // Get watermark data
         $sql = "SELECT * FROM watermark_setting WHERE id = :id LIMIT 1";
@@ -218,16 +222,5 @@ class IndexController extends AbstractActionController
         $view = new ViewModel();
         $view->setVariable('form', $form);
         return $view;
-    }
-
-    /**
-     * Get database connection
-     *
-     * @return \Doctrine\DBAL\Connection
-     */
-    protected function connection()
-    {
-        // Get the connection directly using the plugin() method to access the services
-        return $this->plugin('Omeka\EntityManager')->getConnection();
     }
 }

@@ -55,6 +55,11 @@
   cursor: pointer;
 }
 
+.watermark-position-option[data-position="bottom-full"] {
+  grid-column: 1 / span 3;
+  background-color: #edfaff;
+}
+
 .watermark-position-option:hover {
   background-color: #eaeaea;
 }

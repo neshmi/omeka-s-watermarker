@@ -77,6 +77,7 @@ class WatermarkForm extends Form
                     'bottom-left' => 'Bottom Left',
                     'bottom-right' => 'Bottom Right',
                     'center' => 'Center',
+                    'bottom-full' => 'Bottom Full Width',
                 ],
             ],
             'attributes' => [
