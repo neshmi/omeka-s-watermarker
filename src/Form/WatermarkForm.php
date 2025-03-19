@@ -40,10 +40,12 @@ class WatermarkForm extends Form
             'options' => [
                 'label' => 'Watermark Image',
                 'info' => 'Select an image to use as watermark. For best results, use a PNG image with transparency.',
+                'empty_option' => '[No watermark selected - please choose an image]',
             ],
             'attributes' => [
                 'id' => 'watermark-media',
                 'required' => true,
+                'class' => 'chosen-select',
             ],
         ]);
 

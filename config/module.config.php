@@ -80,4 +80,5 @@ return [
             'apply_on_import' => true,
         ],
     ],
+    // No need to register jobs anymore since we're not using the job system
 ];

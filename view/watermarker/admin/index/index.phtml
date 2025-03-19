@@ -14,6 +14,8 @@ $escape = $this->plugin('escapeHtml');
 <div id="page-actions">
     <?php echo $this->hyperlink($this->translate('Add new watermark'), $this->url('admin/watermarker', ['action' => 'add']), ['class' => 'button']); ?>
     <?php echo $this->hyperlink($this->translate('Configure module'), $this->url('admin/watermarker', ['action' => 'config']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Test on recent media'), $this->url('admin/watermarker', ['action' => 'test']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Check configurations'), $this->url('admin/watermarker', ['action' => 'check']), ['class' => 'button']); ?>
 </div>
 
 <?php if (empty($watermarks)): ?>
@@ -57,6 +59,7 @@ $escape = $this->plugin('escapeHtml');
                 <img src="<?php echo $escape($media->thumbnailUrl('square')); ?>" alt="<?php echo $escape($watermark['name']); ?>" style="max-width: 100px;">
                 <?php else: ?>
                 <span class="error"><?php echo $this->translate('Media not found'); ?></span>
+                <a href="<?php echo $this->url('admin/watermarker', ['action' => 'edit', 'id' => $watermark['id']]); ?>" class="button">Update Media</a>
                 <?php endif; ?>
             </td>
             <td>

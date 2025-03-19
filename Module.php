@@ -1,81 +1,4 @@
-/**
-     * Handle media hydration event - another opportunity to apply watermarks
-     *
-     * @param Event $event
-     */
-    public function handleMediaHydrated(Event $event)
-    {
-        $logger = $this->getServiceLocator()->get('Omeka\Logger');
-        $logger->info('Watermarker: handleMediaHydrated called');
-
-        // Get the request and entity from the event
-        $entity = $event->getParam('entity');
-        $request = $event->getParam('request');
-
-        if (!$entity) {
-            $logger->info('Watermarker: No entity in hydration event');
-            return;
-        }
-
-        // Only process on create operations
-        if ($request && $request->getOperation() !== 'create') {
-            $logger->info('Watermarker: Skipping non-create operation: ' . $request->getOperation());
-            return;
-        }
-
-        // Get the media representation
-        try {
-            $api = $this->getServiceLocator()->get('Omeka\ApiManager');
-            $media = $api->read('media', $entity->getId())->getContent();
-
-            $logger->info(sprintf(
-                'Watermarker: Processing hydrated media ID %s, type %s',
-                $media->id(),
-                $media->mediaType()
-            ));
-
-            $settings = $this->getServiceLocator()->get('Omeka\Settings');
-
-            // Check if watermarking is enabled
-            if (!$settings->get('watermarker_enabled', true)) {
-                $logger->info('Watermarker: Watermarking is disabled globally');
-                return;
-            }
-
-            if (!$settings->get('watermarker_apply_on_upload', true)) {
-                $logger->info('Watermarker: Watermarking on upload is disabled');
-                return;
-            }
-
-            // Check if we have any watermarks configured
-            $connection = $this->getServiceLocator()->get('Omeka\Connection');
-            $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
-            $count = (int)$stmt->fetchColumn();
-
-            if ($count === 0) {
-                $logger->info('Watermarker: No active watermark configurations found');
-                return;
-            }
-
-            $logger->info(sprintf(
-                'Watermarker: Found %d active watermark configurations',
-                $count
-            ));
-
-            // Process the media
-            $result = $this->watermarkService()->processMedia($media);
-
-            $logger->info(sprintf(
-                'Watermarker: Media processing %s',
-                $result ? 'successful' : 'failed'
-            ));
-        } catch (\Exception $e) {
-            $logger->err(sprintf(
-                'Watermarker: Error processing hydrated media: %s',
-                $e->getMessage()
-            ));
-        }
-    }<?php
+<?php
 /**
  * Watermarker
  *
@@ -172,7 +95,14 @@ class Module extends AbstractModule
             [$this, 'handleMediaUpdated']
         );
 
-        // Also listen to hydrate.post for existing items
+        // Also listen to after.save.media for existing items
+        $sharedEventManager->attach(
+            'Omeka\Entity\Media',
+            'entity.persist.post',
+            [$this, 'handleMediaPersisted']
+        );
+
+        // Listen to hydrate post event
         $sharedEventManager->attach(
             'Omeka\Api\Adapter\MediaAdapter',
             'api.hydrate.post',
@@ -188,61 +118,24 @@ class Module extends AbstractModule
 
         // Debug event to log when module events are triggered
         $sharedEventManager->attach(
-            'Omeka\Api\Adapter\MediaAdapter',
+            '*',
             '*',
             function (Event $event) {
                 $logger = $this->getServiceLocator()->get('Omeka\Logger');
-                $logger->info(sprintf(
-                    'Watermarker: Event "%s" triggered',
-                    $event->getName()
-                ));
 
-                // For create and update events, log more details
-                if (in_array($event->getName(), ['api.create.post', 'api.update.post', 'api.hydrate.post'])) {
-                    $response = $event->getParam('response');
-                    $request = $event->getParam('request');
+                // Only log API events that might involve media
+                if (strpos($event->getName(), 'media') !== false ||
+                    strpos($event->getName(), 'item') !== false ||
+                    strpos($event->getName(), 'api') !== false) {
 
-                    if ($response) {
-                        $media = $response->getContent();
-                        $logger->info(sprintf(
-                            'Watermarker: Event has media ID %s with type %s',
-                            $media ? $media->id() : 'unknown',
-                            $media ? $media->mediaType() : 'unknown'
-                        ));
-                    }
-
-                    if ($request) {
-                        $logger->info(sprintf(
-                            'Watermarker: Request operation: %s, resource: %s',
-                            $request->getOperation(),
-                            $request->getResource()
-                        ));
-                    }
+                    $logger->info(sprintf(
+                        'Watermarker: Event "%s" on "%s" triggered',
+                        $event->getName(),
+                        $event->getTarget() ? get_class($event->getTarget()) : 'unknown'
+                    ));
                 }
             }
         );
-    }
-
-    /**
-     * Handle media creation event - apply watermarks to eligible new media
-     *
-     * @param Event $event
-     */
-    public function handleMediaCreated(Event $event)
-    {
-        $media = $event->getParam('response')->getContent();
-        $this->processMediaWatermark($media);
-    }
-
-    /**
-     * Handle media update event - reapply watermarks if needed
-     *
-     * @param Event $event
-     */
-    public function handleMediaUpdated(Event $event)
-    {
-        $media = $event->getParam('response')->getContent();
-        $this->processMediaWatermark($media);
     }
 
     /**
@@ -258,280 +151,237 @@ class Module extends AbstractModule
     }
 
     /**
-     * Process a media item and apply watermark if appropriate
+     * Handle media creation event - apply watermarks to eligible new media
      *
-     * @param MediaRepresentation $media
+     * @param Event $event
      */
-    protected function processMediaWatermark($media)
+    public function handleMediaCreated(Event $event)
     {
-        // Skip if not an image
-        if (!$this->isWatermarkableMedia($media)) {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: handleMediaCreated called');
+
+        $media = $event->getParam('response')->getContent();
+        $settings = $this->getServiceLocator()->get('Omeka\Settings');
+
+        // Check if watermarking is enabled and should be applied on upload
+        if (!$settings->get('watermarker_enabled', true)) {
+            $logger->info('Watermarker: Watermarking is disabled globally');
             return;
         }
 
-        // Get the appropriate watermark based on orientation
-        $watermark = $this->getWatermarkForMedia($media);
-        if (!$watermark) {
+        if (!$settings->get('watermarker_apply_on_upload', true)) {
+            $logger->info('Watermarker: Watermarking on upload is disabled');
             return;
         }
 
-        // Apply the watermark
-        $this->applyWatermark($media, $watermark);
+        $logger->info(sprintf(
+            'Watermarker: Processing media ID %s for watermarking',
+            $media->id()
+        ));
+
+        // Check if we have any watermarks configured
+        $connection = $this->getServiceLocator()->get('Omeka\Connection');
+        $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
+        $count = (int)$stmt->fetchColumn();
+
+        if ($count === 0) {
+            $logger->info('Watermarker: No active watermark configurations found');
+            return;
+        }
+
+        $logger->info(sprintf(
+            'Watermarker: Found %d active watermark configurations',
+            $count
+        ));
+        
+        // Directly process the media for watermarking (no job system)
+        // Using a small delay via the isNewUpload flag to allow derivatives to be generated
+        $result = $this->watermarkService()->processMedia($media, true);
+        
+        $logger->info(sprintf(
+            'Watermarker: Media processing %s',
+            $result ? 'successful' : 'failed'
+        ));
     }
 
     /**
-     * Check if media is eligible for watermarking (image file)
+     * Handle media update event - reapply watermarks if needed
      *
-     * @param MediaRepresentation $media
-     * @return bool
+     * @param Event $event
      */
-    protected function isWatermarkableMedia($media)
+    public function handleMediaUpdated(Event $event)
     {
-        $mediaType = $media->mediaType();
-        return (
-            $media->hasOriginal() &&
-            strpos($mediaType, 'image/') === 0 &&
-            $mediaType != 'image/gif' // Skip animated GIFs for now
-        );
+        $media = $event->getParam('response')->getContent();
+        $settings = $this->getServiceLocator()->get('Omeka\Settings');
+
+        // Check if watermarking is enabled
+        if (!$settings->get('watermarker_enabled', true)) {
+            return;
+        }
+
+        $this->watermarkService()->processMedia($media);
     }
 
     /**
-     * Get appropriate watermark based on media orientation
+     * Handle media hydration event - another opportunity to apply watermarks
      *
-     * @param MediaRepresentation $media
-     * @return array|null Watermark configuration or null if none applies
+     * @param Event $event
      */
-    protected function getWatermarkForMedia($media)
+    public function handleMediaHydrated(Event $event)
     {
-        $tempFile = $this->downloadMediaFile($media);
-        if (!$tempFile) {
-            return null;
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: handleMediaHydrated called');
+
+        // Get the request and entity from the event
+        $entity = $event->getParam('entity');
+        $request = $event->getParam('request');
+
+        if (!$entity) {
+            $logger->info('Watermarker: No entity in hydration event');
+            return;
         }
 
-        // Get image dimensions to determine orientation
-        $imageSize = getimagesize($tempFile);
-        unlink($tempFile); // Clean up temp file
-
-        if (!$imageSize) {
-            return null;
+        // Only process on create operations
+        if ($request && $request->getOperation() !== 'create') {
+            $logger->info('Watermarker: Skipping non-create operation: ' . $request->getOperation());
+            return;
         }
 
-        $width = $imageSize[0];
-        $height = $imageSize[1];
-        $orientation = ($width >= $height) ? 'landscape' : 'portrait';
+        // Get the media representation
+        try {
+            $api = $this->getServiceLocator()->get('Omeka\ApiManager');
+            $media = $api->read('media', $entity->getId())->getContent();
 
-        // Get settings for this orientation
-        $settings = $this->getWatermarkSettings();
+            $logger->info(sprintf(
+                'Watermarker: Processing hydrated media ID %s, type %s',
+                $media->id(),
+                $media->mediaType()
+            ));
 
-        foreach ($settings as $setting) {
-            if ($setting['orientation'] == $orientation && $setting['enabled']) {
-                return $setting;
+            $settings = $this->getServiceLocator()->get('Omeka\Settings');
+
+            // Check if watermarking is enabled
+            if (!$settings->get('watermarker_enabled', true)) {
+                $logger->info('Watermarker: Watermarking is disabled globally');
+                return;
             }
-        }
 
-        return null;
-    }
-
-    /**
-     * Get all watermark settings from database
-     *
-     * @return array
-     */
-    protected function getWatermarkSettings()
-    {
-        $serviceLocator = $this->getServiceLocator();
-        $connection = $serviceLocator->get('Omeka\Connection');
-
-        $sql = "SELECT * FROM watermark_setting WHERE enabled = 1";
-        $stmt = $connection->query($sql);
-
-        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
-    }
-
-    /**
-     * Download original media file to temp location
-     *
-     * @param MediaRepresentation $media
-     * @return string|null Path to temp file or null on failure
-     */
-    protected function downloadMediaFile($media)
-    {
-        $tempFile = tempnam(sys_get_temp_dir(), 'omeka_watermark_');
-        $originalFile = $media->originalUrl();
-
-        // Handle local files
-        if (strpos($originalFile, '/') === 0) {
-            copy($originalFile, $tempFile);
-            return $tempFile;
-        }
-
-        // Handle remote files
-        $fileData = file_get_contents($originalFile);
-        if ($fileData === false) {
-            return null;
-        }
-
-        file_put_contents($tempFile, $fileData);
-        return $tempFile;
-    }
-
-    /**
-     * Apply watermark to media file
-     *
-     * @param MediaRepresentation $media
-     * @param array $watermark
-     */
-    protected function applyWatermark($media, $watermark)
-    {
-        $serviceLocator = $this->getServiceLocator();
-        $api = $serviceLocator->get('Omeka\ApiManager');
-
-        // Get watermark image
-        $watermarkMedia = $api->read('media', $watermark['media_id'])->getContent();
-        $watermarkFile = $this->downloadMediaFile($watermarkMedia);
-
-        if (!$watermarkFile) {
-            return;
-        }
-
-        // Get target image
-        $mediaFile = $this->downloadMediaFile($media);
-        if (!$mediaFile) {
-            unlink($watermarkFile);
-            return;
-        }
-
-        // Create image resources
-        $mediaImage = $this->createImageResource($mediaFile, $media->mediaType());
-        $watermarkImage = $this->createImageResource($watermarkFile, $watermarkMedia->mediaType());
-
-        if (!$mediaImage || !$watermarkImage) {
-            if ($mediaImage) {
-                imagedestroy($mediaImage);
+            if (!$settings->get('watermarker_apply_on_upload', true)) {
+                $logger->info('Watermarker: Watermarking on upload is disabled');
+                return;
             }
-            if ($watermarkImage) {
-                imagedestroy($watermarkImage);
+
+            // Check if we have any watermarks configured
+            $connection = $this->getServiceLocator()->get('Omeka\Connection');
+            $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
+            $count = (int)$stmt->fetchColumn();
+
+            if ($count === 0) {
+                $logger->info('Watermarker: No active watermark configurations found');
+                return;
             }
-            unlink($watermarkFile);
-            unlink($mediaFile);
+
+            $logger->info(sprintf(
+                'Watermarker: Found %d active watermark configurations',
+                $count
+            ));
+
+            // Directly process the media for watermarking (no job system)
+            // Using a small delay via the isNewUpload flag to allow derivatives to be generated
+            $result = $this->watermarkService()->processMedia($media, true);
+            
+            $logger->info(sprintf(
+                'Watermarker: Media processing in handleMediaHydrated %s',
+                $result ? 'successful' : 'failed'
+            ));
+        } catch (\Exception $e) {
+            $logger->err(sprintf(
+                'Watermarker: Error processing hydrated media: %s',
+                $e->getMessage()
+            ));
+        }
+    }
+
+    /**
+     * Handle media persisted event - another opportunity to apply watermarks
+     *
+     * @param Event $event
+     */
+    public function handleMediaPersisted(Event $event)
+    {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: handleMediaPersisted called');
+
+        // Get the entity from the event
+        $entity = $event->getTarget();
+
+        if (!$entity) {
+            $logger->info('Watermarker: No entity in persistence event');
             return;
         }
 
-        // Apply watermark
-        $this->overlayWatermark(
-            $mediaImage,
-            $watermarkImage,
-            $watermark['position'],
-            $watermark['opacity']
-        );
+        $logger->info(sprintf(
+            'Watermarker: Processing persisted media ID %s',
+            $entity->getId()
+        ));
 
-        // Save watermarked image
-        $resultFile = tempnam(sys_get_temp_dir(), 'omeka_watermarked_');
-        $this->saveImageResource($mediaImage, $resultFile, $media->mediaType());
+        $settings = $this->getServiceLocator()->get('Omeka\Settings');
 
-        // Update the file in Omeka S
-        // Note: This is a placeholder. The actual implementation would need to use
-        // Omeka S's file management system to replace the original file.
+        // Check if watermarking is enabled
+        if (!$settings->get('watermarker_enabled', true)) {
+            $logger->info('Watermarker: Watermarking is disabled globally');
+            return;
+        }
 
-        // Clean up
-        imagedestroy($mediaImage);
-        imagedestroy($watermarkImage);
-        unlink($watermarkFile);
-        unlink($mediaFile);
-        unlink($resultFile);
-    }
+        if (!$settings->get('watermarker_apply_on_upload', true)) {
+            $logger->info('Watermarker: Watermarking on upload is disabled');
+            return;
+        }
 
-    /**
-     * Create GD image resource from file
-     *
-     * @param string $file
-     * @param string $mediaType
-     * @return resource|false
-     */
-    protected function createImageResource($file, $mediaType)
-    {
-        switch ($mediaType) {
-            case 'image/jpeg':
-                return imagecreatefromjpeg($file);
-            case 'image/png':
-                return imagecreatefrompng($file);
-            case 'image/webp':
-                return imagecreatefromwebp($file);
-            default:
-                return false;
+        // Check if we have any watermarks configured
+        $connection = $this->getServiceLocator()->get('Omeka\Connection');
+        $stmt = $connection->query("SELECT COUNT(*) FROM watermark_setting WHERE enabled = 1");
+        $count = (int)$stmt->fetchColumn();
+
+        if ($count === 0) {
+            $logger->info('Watermarker: No active watermark configurations found');
+            return;
+        }
+
+        $logger->info(sprintf(
+            'Watermarker: Found %d active watermark configurations',
+            $count
+        ));
+
+        // Get media representation for the entity
+        try {
+            $api = $this->getServiceLocator()->get('Omeka\ApiManager');
+            $media = $api->read('media', $entity->getId())->getContent();
+
+            // Directly process the media for watermarking (no job system)
+            // Using a small delay via the isNewUpload flag to allow derivatives to be generated
+            $result = $this->watermarkService()->processMedia($media, true);
+            
+            $logger->info(sprintf(
+                'Watermarker: Media processing in handleMediaPersisted %s',
+                $result ? 'successful' : 'failed'
+            ));
+        } catch (\Exception $e) {
+            $logger->err(sprintf(
+                'Watermarker: Error processing persisted media: %s',
+                $e->getMessage()
+            ));
         }
     }
 
     /**
-     * Save image resource to file
+     * Get the watermark service
      *
-     * @param resource $image
-     * @param string $file
-     * @param string $mediaType
-     * @return bool
+     * @return \Watermarker\Service\WatermarkService
      */
-    protected function saveImageResource($image, $file, $mediaType)
+    protected function watermarkService()
     {
-        switch ($mediaType) {
-            case 'image/jpeg':
-                return imagejpeg($image, $file, 95);
-            case 'image/png':
-                return imagepng($image, $file, 9);
-            case 'image/webp':
-                return imagewebp($image, $file, 95);
-            default:
-                return false;
-        }
-    }
-
-    /**
-     * Overlay watermark on image
-     *
-     * @param resource $baseImage
-     * @param resource $watermarkImage
-     * @param string $position
-     * @param float $opacity
-     */
-    protected function overlayWatermark($baseImage, $watermarkImage, $position, $opacity)
-    {
-        // Get dimensions
-        $baseWidth = imagesx($baseImage);
-        $baseHeight = imagesy($baseImage);
-        $watermarkWidth = imagesx($watermarkImage);
-        $watermarkHeight = imagesy($watermarkImage);
-
-        // Calculate position
-        $x = 0;
-        $y = 0;
-
-        switch ($position) {
-            case 'top-left':
-                $x = 10;
-                $y = 10;
-                break;
-            case 'top-right':
-                $x = $baseWidth - $watermarkWidth - 10;
-                $y = 10;
-                break;
-            case 'bottom-left':
-                $x = 10;
-                $y = $baseHeight - $watermarkHeight - 10;
-                break;
-            case 'bottom-right':
-                $x = $baseWidth - $watermarkWidth - 10;
-                $y = $baseHeight - $watermarkHeight - 10;
-                break;
-            case 'center':
-                $x = ($baseWidth - $watermarkWidth) / 2;
-                $y = ($baseHeight - $watermarkHeight) / 2;
-                break;
-        }
-
-        // Apply transparency if supported and requested
-        imagealphablending($baseImage, true);
-
-        // Copy watermark onto base image
-        imagecopymerge($baseImage, $watermarkImage, $x, $y, 0, 0, $watermarkWidth, $watermarkHeight, $opacity * 100);
+        return $this->getServiceLocator()->get('Watermarker\WatermarkService');
     }
 
     /**
