@@ -1,0 +1,89 @@
+<?php
+/**
+ * @var \Laminas\View\Renderer\PhpRenderer $this
+ * @var array $watermarks
+ */
+$this->htmlElement('body')->appendAttribute('class', 'watermarker index');
+$this->headLink()->prependStylesheet($this->assetUrl('css/watermarker.css', 'Watermarker'));
+$this->headScript()->appendFile($this->assetUrl('js/watermarker.js', 'Watermarker'));
+$escape = $this->plugin('escapeHtml');
+?>
+
+<?php echo $this->pageTitle($this->translate('Watermarker'), 1, $this->translate('Media Watermarking')); ?>
+
+<div id="page-actions">
+    <?php echo $this->hyperlink($this->translate('Add new watermark'), $this->url('admin/watermarker', ['action' => 'add']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Configure module'), $this->url('admin/watermarker', ['action' => 'config']), ['class' => 'button']); ?>
+</div>
+
+<?php if (empty($watermarks)): ?>
+<div class="no-resources">
+    <p><?php echo $this->translate('No watermark configurations found.'); ?></p>
+</div>
+<?php else: ?>
+
+<div class="browse-controls">
+    <?php echo $this->pagination(); ?>
+</div>
+
+<table class="tablesaw" data-tablesaw-mode="stack">
+    <thead>
+        <tr>
+            <th><?php echo $this->translate('Name'); ?></th>
+            <th><?php echo $this->translate('Preview'); ?></th>
+            <th><?php echo $this->translate('Orientation'); ?></th>
+            <th><?php echo $this->translate('Position'); ?></th>
+            <th><?php echo $this->translate('Opacity'); ?></th>
+            <th><?php echo $this->translate('Status'); ?></th>
+            <th><?php echo $this->translate('Actions'); ?></th>
+        </tr>
+    </thead>
+    <tbody>
+    <?php foreach ($watermarks as $watermark): ?>
+        <?php
+            $media = null;
+            try {
+                $media = $this->api()->read('media', $watermark['media_id'])->getContent();
+            } catch (\Exception $e) {
+                // Media may have been deleted
+            }
+        ?>
+        <tr>
+            <td>
+                <?php echo $escape($watermark['name']); ?>
+            </td>
+            <td>
+                <?php if ($media): ?>
+                <img src="<?php echo $escape($media->thumbnailUrl('square')); ?>" alt="<?php echo $escape($watermark['name']); ?>" style="max-width: 100px;">
+                <?php else: ?>
+                <span class="error"><?php echo $this->translate('Media not found'); ?></span>
+                <?php endif; ?>
+            </td>
+            <td>
+                <?php echo $escape($watermark['orientation']); ?>
+            </td>
+            <td>
+                <?php echo $escape($watermark['position']); ?>
+            </td>
+            <td>
+                <?php echo $escape($watermark['opacity']); ?>
+            </td>
+            <td>
+                <?php echo $watermark['enabled'] ? $this->translate('Enabled') : $this->translate('Disabled'); ?>
+            </td>
+            <td>
+                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'edit', 'id' => $watermark['id']]), [
+                    'class' => 'o-icon-edit',
+                    'title' => $this->translate('Edit'),
+                ]); ?>
+                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'delete', 'id' => $watermark['id']]), [
+                    'class' => 'o-icon-delete',
+                    'title' => $this->translate('Delete'),
+                ]); ?>
+            </td>
+        </tr>
+    <?php endforeach; ?>
+    </tbody>
+</table>
+
+<?php endif; ?>

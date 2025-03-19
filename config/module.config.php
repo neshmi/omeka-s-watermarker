@@ -1,22 +1,44 @@
 <?php
+/**
+ * Watermarker module configuration
+ */
+
 namespace Watermarker;
 
 return [
     'controllers' => [
-        'factories' => [
-            Controller\AdminController::class => Service\Controller\AdminControllerFactory::class,
+        'invokables' => [
+            'Watermarker\Controller\Admin\Index' => Controller\Admin\IndexController::class,
+        ],
+    ],
+    'navigation' => [
+        'AdminModule' => [
+            [
+                'label' => 'Watermarks',
+                'route' => 'admin/watermarker',
+                'resource' => 'Watermarker\Controller\Admin\Index',
+                'privilege' => 'index',
+            ],
         ],
     ],
     'router' => [
         'routes' => [
-            'admin/watermarker' => [
-                'type' => 'Literal',
-                'options' => [
-                    'route'    => '/admin/watermarker',
-                    'defaults' => [
-                        '__NAMESPACE__' => 'Watermarker\Controller',
-                        'controller'    => Controller\AdminController::class,
-                        'action'        => 'index',
+            'admin' => [
+                'child_routes' => [
+                    'watermarker' => [
+                        'type' => 'Segment',
+                        'options' => [
+                            'route' => '/watermarker[/:action[/:id]]',
+                            'defaults' => [
+                                '__NAMESPACE__' => 'Watermarker\Controller\Admin',
+                                'controller' => 'Index',
+                                'action' => 'index',
+                            ],
+                            'constraints' => [
+                                'action' => '[a-zA-Z][a-zA-Z0-9_-]*',
+                                'id' => '\d+',
+                            ],
+                        ],
                     ],
                 ],
             ],
@@ -24,7 +46,35 @@ return [
     ],
     'view_manager' => [
         'template_path_stack' => [
-            OMEKA_PATH . '/modules/Watermarker/view',
+            dirname(__DIR__) . '/view',
+        ],
+    ],
+    'form_elements' => [
+        'invokables' => [
+            Form\ConfigForm::class => Form\ConfigForm::class,
+            Form\WatermarkForm::class => Form\WatermarkForm::class,
+        ],
+    ],
+    'service_manager' => [
+        'factories' => [
+            'Watermarker\WatermarkService' => Service\WatermarkServiceFactory::class,
+        ],
+    ],
+    'translator' => [
+        'translation_file_patterns' => [
+            [
+                'type' => 'gettext',
+                'base_dir' => dirname(__DIR__) . '/language',
+                'pattern' => '%s.mo',
+                'text_domain' => null,
+            ],
+        ],
+    ],
+    'watermarker' => [
+        'config' => [
+            'watermark_enabled' => true,
+            'apply_on_upload' => true,
+            'apply_on_import' => true,
         ],
     ],
 ];

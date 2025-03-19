@@ -1,0 +1,30 @@
+<?php
+/**
+ * @var \Laminas\View\Renderer\PhpRenderer $this
+ * @var \Omeka\Form\ConfirmForm $form
+ * @var array $watermark
+ */
+$this->htmlElement('body')->appendAttribute('class', 'watermarker delete');
+$form->prepare();
+$escape = $this->plugin('escapeHtml');
+?>
+
+<?php echo $this->pageTitle(sprintf($this->translate('Delete Watermark: "%s"'), $escape($watermark['name'])), 1, $this->translate('Media Watermarking')); ?>
+
+<div class="delete-confirm">
+    <p><?php echo sprintf(
+        $this->translate('Are you sure you want to delete the watermark "%s"?'),
+        $escape($watermark['name'])
+    ); ?></p>
+    <p class="warning"><?php echo $this->translate('This action cannot be undone.'); ?></p>
+</div>
+
+<?php echo $this->form()->openTag($form); ?>
+
+<div class="page-actions">
+    <?php echo $this->formSubmit($form->get('submit')); ?>
+    <?php echo $this->hyperlink($this->translate('Cancel'), $this->url('admin/watermarker', ['action' => 'index']), ['class' => 'button']); ?>
+</div>
+
+<?php echo $this->formCollection($form, false); ?>
+<?php echo $this->form()->closeTag(); ?>
