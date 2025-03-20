@@ -266,30 +266,9 @@ class IndexController extends AbstractActionController
         $stmt = $connection->query($sql);
         $watermarks = $stmt->fetchAll();
 
-        $messenger->addSuccess(sprintf(
-            'Found %d enabled watermark configurations in database',
-            count($watermarks)
-        ));
-
-        foreach ($watermarks as $watermark) {
-            $messenger->addSuccess(sprintf(
-                'Watermark "%s" uses asset ID: %s',
-                $watermark['name'],
-                $watermark['media_id']
-            ));
-
-            try {
-                $asset = $api->read('assets', $watermark['media_id'])->getContent();
-                $messenger->addSuccess(sprintf(
-                    'Asset exists and has URL: %s',
-                    $asset->assetUrl()
-                ));
-            } catch (\Exception $e) {
-                $messenger->addError(sprintf(
-                    'Asset does not exist: %s',
-                    $e->getMessage()
-                ));
-            }
+        if (count($watermarks) == 0) {
+            $messenger->addWarning('No enabled watermark configurations found. Please create and enable a watermark first.');
+            return $this->redirect()->toRoute('admin/watermarker');
         }
 
         if (!$mediaId) {
@@ -320,11 +299,6 @@ class IndexController extends AbstractActionController
             }
         }
 
-        $messenger->addSuccess(sprintf(
-            'Using media ID %s for test',
-            $mediaId
-        ));
-
         // Process this media with the watermark service
         $watermarkService = $services->get('Watermarker\WatermarkService');
 
@@ -333,20 +307,15 @@ class IndexController extends AbstractActionController
             $watermarkService->setDebugMode(true);
         }
 
-        $logger->info('Starting test watermarking process');
         $result = $watermarkService->processMedia($media);
-        $logger->info('Completed test watermarking process');
 
         if ($result) {
-            $messenger->addSuccess(
-                'Successfully applied watermark to derivatives. The original file is preserved. ' .
-                'The watermark will be visible in the large and medium views, but not in thumbnails or original downloads.'
-            );
+            $messenger->addSuccess('Successfully applied watermark to derivative images.');
         } else {
             $messenger->addError('Failed to apply watermark. Check the logs for details.');
         }
 
-        // Redirect to the media show page - now it's safe since we don't delete the media
+        // Redirect to the media show page
         return $this->redirect()->toUrl($media->url());
     }
 
@@ -370,68 +339,33 @@ class IndexController extends AbstractActionController
 
         foreach ($watermarks as $watermark) {
             try {
-                // Log the asset ID for debugging
-                $messenger->addSuccess(sprintf(
-                    'Watermark "%s" has asset ID: %s',
-                    $watermark['name'],
-                    $watermark['media_id']
-                ));
-
                 // Check if the asset exists
                 $assetExists = true;
                 try {
                     $asset = $api->read('assets', $watermark['media_id'])->getContent();
-                    $messenger->addSuccess(sprintf(
-                        'Successfully loaded asset %s',
-                        $watermark['media_id']
-                    ));
+                    $validCount++;
                 } catch (\Exception $e) {
                     $assetExists = false;
-                    $messenger->addError(sprintf(
-                        'Error loading asset: %s',
-                        $e->getMessage()
-                    ));
-                }
-
-                if (!$assetExists) {
                     $invalidCount++;
                     $messenger->addWarning(sprintf(
-                        'Watermark "%s" (ID: %s) references a non-existent asset (ID: %s)',
-                        $watermark['name'],
-                        $watermark['id'],
-                        $watermark['media_id']
-                    ));
-                } else {
-                    $validCount++;
-
-                    // Try to get the asset URL
-                    $messenger->addSuccess(sprintf(
-                        'Asset URL: %s',
-                        $asset->assetUrl()
+                        'Watermark "%s" references a missing asset. Please edit and select a valid image.',
+                        $watermark['name']
                     ));
                 }
             } catch (\Exception $e) {
-                $messenger->addError(sprintf(
-                    'Error checking watermark "%s" (ID: %s): %s',
-                    $watermark['name'],
-                    $watermark['id'],
-                    $e->getMessage()
-                ));
+                $invalidCount++;
             }
         }
 
         if ($validCount > 0) {
             $messenger->addSuccess(sprintf(
-                '%d watermark configuration(s) are valid',
+                'Successfully verified %d watermark configuration(s)',
                 $validCount
             ));
         }
 
-        if ($invalidCount > 0) {
-            $messenger->addWarning(sprintf(
-                '%d watermark configuration(s) need to be updated. Please edit them to select valid assets.',
-                $invalidCount
-            ));
+        if ($invalidCount == 0 && $validCount > 0) {
+            $messenger->addSuccess('All watermark configurations are valid!');
         }
 
         return $this->redirect()->toRoute('admin/watermarker');

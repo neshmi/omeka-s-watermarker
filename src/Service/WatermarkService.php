@@ -113,22 +113,22 @@ class WatermarkService
         if ($isNewUpload) {
             // Sleep to ensure derivatives are fully generated
             sleep(5);
-            
+
             // Get media entity to access storage ID (needed to check for derivatives)
             $entityManager = $this->serviceLocator->get('Omeka\EntityManager');
             $mediaEntity = $entityManager->find('Omeka\Entity\Media', $media->id());
-            
+
             if (!$mediaEntity) {
                 return false;
             }
-            
+
             $storageId = $mediaEntity->getStorageId();
             $extension = $mediaEntity->getExtension();
-            
+
             // Check if derivatives exist
             $derivativeFound = false;
             $derivativeTypes = ['large', 'medium'];
-            
+
             foreach ($derivativeTypes as $type) {
                 $possiblePaths = [
                     OMEKA_PATH . '/files/' . $type . '/' . $storageId . '.' . $extension,
@@ -136,23 +136,23 @@ class WatermarkService
                     '/var/www/html/files/' . $type . '/' . $storageId . '.' . $extension,
                     '/var/www/html/files/' . $type . '/' . $storageId,
                 ];
-                
+
                 foreach ($possiblePaths as $path) {
                     if (file_exists($path)) {
                         $derivativeFound = true;
                         break;
                     }
                 }
-                
+
                 if ($derivativeFound) {
                     break;
                 }
             }
-            
+
             if (!$derivativeFound) {
                 // Sleep even longer if no derivatives were found
                 sleep(5);
-                
+
                 // Try a broader search as a last resort
                 foreach ($derivativeTypes as $type) {
                     $found = $this->findDerivativeFiles($type, $storageId);
@@ -400,7 +400,7 @@ class WatermarkService
 
     /**
      * Apply watermark directly to derivatives without using the job system
-     * 
+     *
      * This is the core method that actually applies the watermark to derivative images.
      * It logs extensively to help diagnose issues with watermark application.
      *
@@ -411,142 +411,471 @@ class WatermarkService
     public function applyWatermarkDirectly(MediaRepresentation $media, array $watermarkConfig)
     {
         try {
+            $this->logger->info(sprintf(
+                'Watermarker: Starting watermark application for media ID: %s (type: %s)',
+                $media->id(),
+                $media->mediaType()
+            ));
+
             // Get watermark asset
             $assetId = $watermarkConfig['media_id'];
             $api = $this->serviceLocator->get('Omeka\ApiManager');
             $watermarkAsset = $api->read('assets', $assetId)->getContent();
+            $this->logger->info('Watermarker: Successfully loaded watermark asset');
 
             // Get the temp directory
             $tempDir = $this->serviceLocator->get('Config')['file_manager']['temp_dir'] ?? sys_get_temp_dir();
 
-            // Find the local path to the asset
+            // Find the local path to the asset using Omeka services
+            $store = $this->serviceLocator->get('Omeka\File\Store');
             $assetUrl = $watermarkAsset->assetUrl();
             $assetFilename = basename($assetUrl);
 
-            // Try various possible locations for the asset file
+            // Get the watermark from the asset store
+            $assetPath = null;
             $possibleAssetPaths = [
                 OMEKA_PATH . '/files/asset/' . $assetFilename,
                 '/var/www/html/files/asset/' . $assetFilename,
             ];
 
-            $assetPath = null;
             foreach ($possibleAssetPaths as $path) {
                 if (file_exists($path)) {
                     $assetPath = $path;
+                    $this->logger->info(sprintf('Watermarker: Found watermark asset at path: %s', $path));
                     break;
                 }
             }
 
             if (!$assetPath) {
+                $this->logger->err('Watermarker: Could not find watermark asset file on disk');
                 return false;
             }
 
-            // Get media entity to access storage ID
+            // Get media entity information
             $entityManager = $this->serviceLocator->get('Omeka\EntityManager');
             $mediaEntity = $entityManager->find('Omeka\Entity\Media', $media->id());
-            
+
             if (!$mediaEntity) {
+                $this->logger->err('Watermarker: Could not load media entity');
                 return false;
             }
-            
+
             $storageId = $mediaEntity->getStorageId();
-            $extension = $mediaEntity->getExtension();
             $mediaType = $mediaEntity->getMediaType();
-            
-            // Find paths to the derivative files
-            $derivativeTypes = ['large', 'medium'];
+
+            // Log media info
+            $this->logger->info(sprintf(
+                'Watermarker: Media details - ID: %s, Type: %s, Storage ID: %s',
+                $media->id(), $mediaType, $storageId
+            ));
+
+            // Get the derivative URLs from media representation
+            $thumbnailUrls = $media->thumbnailUrls();
+            // Only watermark the large derivative
+            $derivativeTypes = ['large'];
             $success = false;
-            
+
+            // Process each derivative type
             foreach ($derivativeTypes as $type) {
-                // Find the derivative file
+                $this->logger->info(sprintf('Watermarker: Processing %s derivative', $type));
+
+                // Make sure we have a thumbnail of this type
+                if (!isset($thumbnailUrls[$type])) {
+                    $this->logger->err(sprintf('Watermarker: No %s derivative URL available', $type));
+                    continue;
+                }
+
+                $derivativeUrl = $thumbnailUrls[$type];
+                $this->logger->info(sprintf('Watermarker: Derivative URL: %s', $derivativeUrl));
+
+                // Extract filename from URL
+                $derivativeFilename = basename(parse_url($derivativeUrl, PHP_URL_PATH));
+                $this->logger->info(sprintf('Watermarker: Derivative filename: %s', $derivativeFilename));
+
+                // Find derivative file on disk
                 $derivativePath = null;
-                $possibleDerivativePaths = [
-                    OMEKA_PATH . '/files/' . $type . '/' . $storageId . '.' . $extension,
+                $possiblePaths = [
                     OMEKA_PATH . '/files/' . $type . '/' . $storageId,
-                    '/var/www/html/files/' . $type . '/' . $storageId . '.' . $extension,
+                    OMEKA_PATH . '/files/' . $type . '/' . $derivativeFilename,
                     '/var/www/html/files/' . $type . '/' . $storageId,
+                    '/var/www/html/files/' . $type . '/' . $derivativeFilename,
                 ];
-                
-                foreach ($possibleDerivativePaths as $path) {
+
+                // Add extensions for good measure
+                foreach (['.jpg', '.jpeg', '.png', '.webp', ''] as $ext) {
+                    if (!in_array(OMEKA_PATH . '/files/' . $type . '/' . $storageId . $ext, $possiblePaths)) {
+                        $possiblePaths[] = OMEKA_PATH . '/files/' . $type . '/' . $storageId . $ext;
+                        $possiblePaths[] = '/var/www/html/files/' . $type . '/' . $storageId . $ext;
+                    }
+                }
+
+                // Look for the derivative file
+                foreach ($possiblePaths as $path) {
                     if (file_exists($path)) {
                         $derivativePath = $path;
+                        $this->logger->info(sprintf('Watermarker: Found %s derivative at: %s', $type, $path));
                         break;
                     }
                 }
-                
+
+                // If still not found, try glob
                 if (!$derivativePath) {
-                    continue;
-                }
-                
-                // Create temp files for processing
-                $tempDerivative = tempnam($tempDir, 'watermark_');
-                
-                // Copy the derivative for processing
-                if (!copy($derivativePath, $tempDerivative)) {
-                    @unlink($tempDerivative);
-                    continue;
-                }
-                
-                // Create image resources
-                $mediaImage = $this->createImageResource($tempDerivative, $mediaType);
-                $watermarkImage = $this->createImageResource($assetPath, 'image/png');
-                
-                if (!$mediaImage) {
-                    if ($watermarkImage) {
-                        imagedestroy($watermarkImage);
+                    $globPattern = OMEKA_PATH . '/files/' . $type . '/' . $storageId . '*';
+                    $this->logger->info(sprintf('Watermarker: Trying glob pattern: %s', $globPattern));
+                    $matches = glob($globPattern);
+
+                    if (!empty($matches)) {
+                        $derivativePath = $matches[0];
+                        $this->logger->info(sprintf('Watermarker: Found via glob: %s', $derivativePath));
+                    } else {
+                        // Try alternate location
+                        $globPattern = '/var/www/html/files/' . $type . '/' . $storageId . '*';
+                        $this->logger->info(sprintf('Watermarker: Trying alternate glob pattern: %s', $globPattern));
+                        $matches = glob($globPattern);
+
+                        if (!empty($matches)) {
+                            $derivativePath = $matches[0];
+                            $this->logger->info(sprintf('Watermarker: Found via alternate glob: %s', $derivativePath));
+                        }
                     }
+                }
+
+                // If still not found, check similar files
+                if (!$derivativePath) {
+                    $this->logger->err(sprintf('Watermarker: Could not find %s derivative file', $type));
+
+                    // List directory contents to help debug
+                    $dirToCheck = '/var/www/html/files/' . $type . '/';
+                    if (is_dir($dirToCheck)) {
+                        $files = scandir($dirToCheck);
+                        $this->logger->info(sprintf('Watermarker: Directory contains %d files', count($files) - 2));
+
+                        $prefix = substr($storageId, 0, 8);
+                        $relevantFiles = array_filter($files, function($file) use ($prefix) {
+                            return strpos($file, $prefix) === 0;
+                        });
+
+                        if (!empty($relevantFiles)) {
+                            $this->logger->info(sprintf('Watermarker: Found similar files: %s', implode(', ', $relevantFiles)));
+                            // Use the first matching file
+                            $derivativePath = $dirToCheck . reset($relevantFiles);
+                            $this->logger->info(sprintf('Watermarker: Using similar file: %s', $derivativePath));
+                        }
+                    }
+                }
+
+                // Skip if we still can't find the derivative
+                if (!$derivativePath || !file_exists($derivativePath)) {
+                    $this->logger->err(sprintf('Watermarker: Unable to locate %s derivative, skipping', $type));
+                    continue;
+                }
+
+                // Get the file type based on actual file
+                $fileInfo = @getimagesize($derivativePath);
+                if (!$fileInfo) {
+                    $this->logger->err(sprintf('Watermarker: Failed to get image info for %s', $derivativePath));
+                    continue;
+                }
+
+                $derivativeType = image_type_to_mime_type($fileInfo[2]);
+                $derivativeWidth = $fileInfo[0];
+                $derivativeHeight = $fileInfo[1];
+
+                $this->logger->info(sprintf(
+                    'Watermarker: Derivative is type: %s, dimensions: %dx%d (original type was: %s)',
+                    $derivativeType, $derivativeWidth, $derivativeHeight, $mediaType
+                ));
+
+                // Note format conversion if it happened
+                if ($mediaType !== $derivativeType) {
+                    $this->logger->info(sprintf(
+                        'Watermarker: Format conversion detected: original %s → derivative %s',
+                        $mediaType, $derivativeType
+                    ));
+                }
+
+                // Create a temp copy of the derivative for processing
+                $tempDerivative = tempnam($tempDir, 'watermark_');
+                // Add appropriate extension to help GD
+                $derivativeExt = $this->getExtensionForMimeType($derivativeType);
+                $tempDerivativeWithExt = $tempDerivative . '.' . $derivativeExt;
+                rename($tempDerivative, $tempDerivativeWithExt);
+                $tempDerivative = $tempDerivativeWithExt;
+
+                if (!copy($derivativePath, $tempDerivative)) {
+                    $this->logger->err(sprintf('Watermarker: Failed to copy derivative to temp file'));
                     @unlink($tempDerivative);
                     continue;
                 }
-                
+
+                // Create image resources - use the actual derivative type, not the original media type
+                $mediaImage = $this->createImageResource($tempDerivative, $derivativeType);
+                if (!$mediaImage) {
+                    $this->logger->err(sprintf(
+                        'Watermarker: Failed to create image resource from derivative (type: %s, path: %s)',
+                        $derivativeType, $tempDerivative
+                    ));
+                    @unlink($tempDerivative);
+                    continue;
+                }
+
+                // Load the watermark image
+                $watermarkImage = $this->createImageResource($assetPath, 'image/png');
                 if (!$watermarkImage) {
+                    $this->logger->err('Watermarker: Failed to create image resource from watermark');
                     imagedestroy($mediaImage);
                     @unlink($tempDerivative);
                     continue;
                 }
-                
+
                 // Apply the watermark
+                $this->logger->info(sprintf(
+                    'Watermarker: Applying watermark to %s derivative (position: %s, opacity: %.2f)',
+                    $type, $watermarkConfig['position'], (float)$watermarkConfig['opacity']
+                ));
+
                 $this->overlayWatermark(
                     $mediaImage,
                     $watermarkImage,
                     $watermarkConfig['position'],
                     (float)$watermarkConfig['opacity']
                 );
-                
-                // Save the watermarked image
+
+                // Save the watermarked image in the derivative's actual format
                 $tempResult = tempnam($tempDir, 'result_');
-                $saveSuccess = $this->saveImageResource($mediaImage, $tempResult, $mediaType);
-                
+
+                // Make sure we match the original file's extension if it has one
+                $originalExt = strtolower(pathinfo($derivativePath, PATHINFO_EXTENSION));
+                if (!empty($originalExt)) {
+                    $this->logger->info(sprintf('Watermarker: Using original file extension for temp file: %s', $originalExt));
+                    $derivativeExt = $originalExt;
+                }
+
+                // Add appropriate extension
+                $tempResultWithExt = $tempResult . '.' . $derivativeExt;
+                rename($tempResult, $tempResultWithExt);
+                $tempResult = $tempResultWithExt;
+
+                // Save using the derivative's actual type
+                $saveSuccess = $this->saveImageResource($mediaImage, $tempResult, $derivativeType);
+
                 // Clean up resources
                 imagedestroy($mediaImage);
                 imagedestroy($watermarkImage);
                 @unlink($tempDerivative);
-                
+
                 if (!$saveSuccess) {
+                    $this->logger->err('Watermarker: Failed to save watermarked image');
                     @unlink($tempResult);
                     continue;
                 }
-                
+
+                // Verify temp file has content
+                if (!file_exists($tempResult) || filesize($tempResult) < 100) {
+                    $this->logger->err(sprintf(
+                        'Watermarker: Temp result file (%s) is empty or too small (size: %d bytes)',
+                        $tempResult,
+                        file_exists($tempResult) ? filesize($tempResult) : 0
+                    ));
+                    @unlink($tempResult);
+                    continue;
+                }
+
+                $this->logger->info(sprintf(
+                    'Watermarker: Temp result file (%s) created successfully (size: %d bytes)',
+                    $tempResult,
+                    filesize($tempResult)
+                ));
+
+                // Ensure original file and temp file have compatible formats
+                $originalFormat = strtolower(pathinfo($derivativePath, PATHINFO_EXTENSION));
+                $tempFormat = strtolower(pathinfo($tempResult, PATHINFO_EXTENSION));
+
+                $this->logger->info(sprintf(
+                    'Watermarker: Format check - original: %s, temp: %s, path: %s',
+                    $originalFormat ? $originalFormat : 'none',
+                    $tempFormat ? $tempFormat : 'none',
+                    $derivativePath
+                ));
+
+                // If original has no extension but should have one based on detected type
+                if (empty($originalFormat)) {
+                    // Check if we can determine the format from the file
+                    $fileInfo = @getimagesize($derivativePath);
+                    if ($fileInfo && isset($fileInfo[2])) {
+                        $detectedType = image_type_to_mime_type($fileInfo[2]);
+                        $detectedExt = $this->getExtensionForMimeType($detectedType);
+                        $this->logger->info(sprintf(
+                            'Watermarker: Original file has no extension but detected as: %s (.%s)',
+                            $detectedType, $detectedExt
+                        ));
+
+                        // Use the correct extension for the output file
+                        if ($tempFormat != $detectedExt) {
+                            $newTempFile = $tempResult . '.' . $detectedExt;
+                            rename($tempResult, $newTempFile);
+                            $tempResult = $newTempFile;
+                            $tempFormat = $detectedExt;
+                            $this->logger->info(sprintf(
+                                'Watermarker: Renamed temp file to match correct format: %s',
+                                $tempResult
+                            ));
+                        }
+                    }
+                } else if ($tempFormat && $originalFormat != $tempFormat) {
+                    // If formats don't match, rename temp file to match original
+                    $newTempFile = preg_replace('/\.' . preg_quote($tempFormat) . '$/', '.' . $originalFormat, $tempResult);
+                    if ($newTempFile != $tempResult) {
+                        rename($tempResult, $newTempFile);
+                        $tempResult = $newTempFile;
+                        $this->logger->info(sprintf(
+                            'Watermarker: Renamed temp file to match original format: %s -> %s',
+                            $tempFormat, $originalFormat
+                        ));
+                    }
+                }
+
                 // Replace the original derivative with the watermarked version
-                if (!copy($tempResult, $derivativePath)) {
-                    @unlink($tempResult);
+                $copySuccess = false;
+
+                // Check file permissions before copy
+                $targetDir = dirname($derivativePath);
+                if (!is_writable($targetDir)) {
+                    $this->logger->err(sprintf('Watermarker: Target directory is not writable: %s', $targetDir));
+
+                    // Try to adjust permissions if possible
+                    $this->logger->info(sprintf('Watermarker: Attempting to change permissions for target directory: %s', $targetDir));
+                    @chmod($targetDir, 0777);
+
+                    if (!is_writable($targetDir)) {
+                        $this->logger->err('Watermarker: Unable to make target directory writable');
+                    }
+                }
+
+                // Get original file permissions
+                $originalPerms = null;
+                if (file_exists($derivativePath)) {
+                    $originalPerms = fileperms($derivativePath);
+                    // Check if file is writable
+                    if (!is_writable($derivativePath)) {
+                        $this->logger->info(sprintf(
+                            'Watermarker: Original file is not writable, attempting chmod: %s',
+                            $derivativePath
+                        ));
+                        @chmod($derivativePath, 0666);
+                    }
+                }
+
+                // Try file_put_contents first (more reliable in some environments)
+                $fileContents = file_get_contents($tempResult);
+                if ($fileContents !== false) {
+                    $bytesWritten = file_put_contents($derivativePath, $fileContents);
+                    if ($bytesWritten !== false && $bytesWritten > 0) {
+                        $this->logger->info(sprintf(
+                            'Watermarker: Successfully wrote %d bytes to derivative using file_put_contents',
+                            $bytesWritten
+                        ));
+                        $copySuccess = true;
+                    } else {
+                        $this->logger->err('Watermarker: Failed to write to derivative using file_put_contents');
+
+                        // Try copy as fallback
+                        if (@copy($tempResult, $derivativePath)) {
+                            $this->logger->info('Watermarker: Successfully copied to derivative using copy()');
+                            $copySuccess = true;
+                        } else {
+                            $this->logger->err(sprintf(
+                                'Watermarker: All file write methods failed for derivative: %s (error: %s)',
+                                $derivativePath,
+                                error_get_last()['message'] ?? 'Unknown error'
+                            ));
+                        }
+                    }
+                } else {
+                    $this->logger->err('Watermarker: Failed to read temp file contents');
+
+                    // Try copy as fallback
+                    if (@copy($tempResult, $derivativePath)) {
+                        $this->logger->info('Watermarker: Successfully copied to derivative using copy()');
+                        $copySuccess = true;
+                    } else {
+                        $this->logger->err(sprintf(
+                            'Watermarker: Copy failed for derivative: %s (error: %s)',
+                            $derivativePath,
+                            error_get_last()['message'] ?? 'Unknown error'
+                        ));
+                    }
+                }
+
+                // Restore original permissions if we had them
+                if ($copySuccess && $originalPerms !== null) {
+                    @chmod($derivativePath, $originalPerms);
+                }
+
+                // Clean up temp file
+                @unlink($tempResult);
+
+                // Verify final file
+                if ($copySuccess && file_exists($derivativePath)) {
+                    $finalSize = filesize($derivativePath);
+                    if ($finalSize < 100) {
+                        $this->logger->err(sprintf(
+                            'Watermarker: Final derivative is too small (%d bytes), likely corrupted',
+                            $finalSize
+                        ));
+                        continue;
+                    }
+
+                    $this->logger->info(sprintf(
+                        'Watermarker: Final derivative verified successfully (size: %d bytes)',
+                        $finalSize
+                    ));
+                    $this->logger->info(sprintf('Watermarker: Successfully watermarked %s derivative', $type));
+                    $success = true;
+                } else {
+                    $this->logger->err('Watermarker: Failed to verify final watermarked derivative');
                     continue;
                 }
-                
-                @unlink($tempResult);
                 $success = true;
             }
-            
+
+            if ($success) {
+                $this->logger->info(sprintf('Watermarker: Successfully watermarked media ID: %s', $media->id()));
+            } else {
+                $this->logger->err(sprintf('Watermarker: Failed to watermark any derivatives for media ID: %s', $media->id()));
+            }
+
             return $success;
         } catch (\Exception $e) {
             $this->logger->err(sprintf(
-                'Failed to apply watermark to derivatives: %s',
+                'Watermarker: Exception while applying watermark: %s',
                 $e->getMessage()
             ));
             return false;
         }
     }
-    
+
+    /**
+     * Helper method to get file extension from MIME type
+     *
+     * @param string $mimeType The MIME type
+     * @return string The file extension without leading dot
+     */
+    public function getExtensionForMimeType($mimeType)
+    {
+        $map = [
+            'image/jpeg' => 'jpg',
+            'image/jpg' => 'jpg',
+            'image/png' => 'png',
+            'image/gif' => 'gif',
+            'image/webp' => 'webp',
+            'image/bmp' => 'bmp',
+            'image/tiff' => 'tiff',
+        ];
+
+        return isset($map[$mimeType]) ? $map[$mimeType] : 'jpg';
+    }
+
     /**
      * Legacy method for backward compatibility
      * @deprecated Use applyWatermarkDirectly instead
@@ -555,10 +884,10 @@ class WatermarkService
     {
         return $this->applyWatermarkDirectly($media, $watermarkConfig);
     }
-    
+
     /**
      * Find derivative files using a broader search
-     * 
+     *
      * @param string $type The derivative type (large, medium, etc.)
      * @param string $storageId The storage ID of the media
      * @return array Array of found file paths
@@ -566,23 +895,23 @@ class WatermarkService
     protected function findDerivativeFiles($type, $storageId)
     {
         $found = [];
-        
+
         // Search in common locations
         $searchLocations = [
             OMEKA_PATH . '/files/' . $type,
             '/var/www/html/files/' . $type
         ];
-        
+
         foreach ($searchLocations as $dir) {
             if (!is_dir($dir)) {
                 $this->logger->info(sprintf('Directory %s does not exist', $dir));
                 continue;
             }
-            
+
             // Use glob to find files that match the storage ID pattern
             $pattern = $dir . '/' . $storageId . '*';
             $matches = glob($pattern);
-            
+
             if (!empty($matches)) {
                 $this->logger->info(sprintf('Found %d matches in %s with pattern %s', count($matches), $dir, $pattern));
                 $found = array_merge($found, $matches);
@@ -590,7 +919,7 @@ class WatermarkService
                 $this->logger->info(sprintf('No matches in %s with pattern %s', $dir, $pattern));
             }
         }
-        
+
         return $found;
     }
 
@@ -651,17 +980,111 @@ class WatermarkService
      * @param string $mediaType
      * @return resource|false
      */
-    protected function createImageResource($file, $mediaType)
+    public function createImageResource($file, $mediaType)
     {
+        $this->logger->info(sprintf('Watermarker: Creating image resource from file type: %s (path: %s)', $mediaType, $file));
+
+        // Check if file is readable
+        if (!is_readable($file)) {
+            $this->logger->err(sprintf('Watermarker: File is not readable: %s', $file));
+            return false;
+        }
+
+        // Get information about the image
+        $imageInfo = @getimagesize($file);
+        if ($imageInfo) {
+            $this->logger->info(sprintf('Watermarker: Image size: %dx%d, detected type: %s',
+                $imageInfo[0], $imageInfo[1], image_type_to_mime_type($imageInfo[2])));
+
+            // If detected type is different from provided mediaType, use detected type
+            if ($imageInfo[2] !== false && image_type_to_mime_type($imageInfo[2]) !== $mediaType) {
+                $this->logger->info(sprintf('Watermarker: Detected media type (%s) differs from provided type (%s), using detected type',
+                    image_type_to_mime_type($imageInfo[2]), $mediaType));
+                $mediaType = image_type_to_mime_type($imageInfo[2]);
+            }
+        } else {
+            $this->logger->err(sprintf('Watermarker: Failed to get image information for: %s', $file));
+        }
+
+        // Check file extension if mediaType seems wrong
+        $fileExt = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+        if ($fileExt == 'jpg' && $mediaType == 'image/png') {
+            $this->logger->info('Watermarker: File extension is JPG but media type is PNG, treating as JPEG');
+            $mediaType = 'image/jpeg';
+        } else if ($fileExt == 'png' && $mediaType == 'image/jpeg') {
+            $this->logger->info('Watermarker: File extension is PNG but media type is JPEG, treating as PNG');
+            $mediaType = 'image/png';
+        }
+
         switch ($mediaType) {
             case 'image/jpeg':
-                return @imagecreatefromjpeg($file);
+                $img = @imagecreatefromjpeg($file);
+                if (!$img) {
+                    $this->logger->err('Watermarker: Failed to create JPEG image resource');
+
+                    // Try alternate method as fallback
+                    $this->logger->info('Watermarker: Trying alternate method to load JPEG');
+                    $img = @imagecreatefromstring(file_get_contents($file));
+                    if ($img) {
+                        $this->logger->info('Watermarker: Successfully created image from string data');
+                    }
+                } else {
+                    $this->logger->info('Watermarker: Successfully created JPEG image resource');
+                }
+                return $img;
+
             case 'image/png':
-                return @imagecreatefrompng($file);
+                $img = @imagecreatefrompng($file);
+                if (!$img) {
+                    $this->logger->err('Watermarker: Failed to create PNG image resource');
+
+                    // Try alternate method as fallback
+                    $this->logger->info('Watermarker: Trying alternate method to load PNG');
+                    $img = @imagecreatefromstring(file_get_contents($file));
+                    if ($img) {
+                        $this->logger->info('Watermarker: Successfully created image from string data');
+                    }
+                }
+
+                if ($img) {
+                    // Preserve transparency for PNG images
+                    imagealphablending($img, true);
+                    imagesavealpha($img, true);
+                    $this->logger->info('Watermarker: Successfully created PNG image resource with alpha channel preserved');
+                }
+                return $img;
+
             case 'image/webp':
                 if (function_exists('imagecreatefromwebp')) {
-                    return @imagecreatefromwebp($file);
+                    $img = @imagecreatefromwebp($file);
+                    if (!$img) {
+                        $this->logger->err('Watermarker: Failed to create WebP image resource');
+
+                        // Try alternate method as fallback
+                        $this->logger->info('Watermarker: Trying alternate method to load WebP');
+                        $img = @imagecreatefromstring(file_get_contents($file));
+                        if ($img) {
+                            $this->logger->info('Watermarker: Successfully created image from string data');
+                        }
+                    } else {
+                        $this->logger->info('Watermarker: Successfully created WebP image resource');
+                    }
+                    return $img;
+                } else {
+                    $this->logger->err('Watermarker: WebP support not available in PHP');
                 }
+                break;
+
+            default:
+                // Try generic approach for unsupported types
+                $this->logger->info(sprintf('Watermarker: Trying generic approach for unsupported media type: %s', $mediaType));
+                $img = @imagecreatefromstring(file_get_contents($file));
+                if ($img) {
+                    $this->logger->info('Watermarker: Successfully created image from string data');
+                    return $img;
+                }
+
+                $this->logger->err(sprintf('Watermarker: Unsupported media type: %s', $mediaType));
                 break;
         }
 
@@ -676,18 +1099,357 @@ class WatermarkService
      * @param string $mediaType
      * @return bool Success
      */
-    protected function saveImageResource($image, $file, $mediaType)
+    public function saveImageResource($image, $file, $mediaType)
     {
-        switch ($mediaType) {
+        $this->logger->info(sprintf('Watermarker: Saving image resource as type: %s to %s', $mediaType, $file));
+
+        // Check if file extension matches media type
+        $fileExt = strtolower(pathinfo($file, PATHINFO_EXTENSION));
+        $detectedMimeType = $mediaType;
+
+        // Try to detect the actual type of the image resource
+        $actualType = null;
+        if (function_exists('imageistruecolor') && imageistruecolor($image)) {
+            // For PNG with transparency, we need to preserve that
+            $hasAlpha = false;
+            for ($x = 0; $x < imagesx($image) && !$hasAlpha; $x++) {
+                for ($y = 0; $y < imagesy($image) && !$hasAlpha; $y++) {
+                    $color = imagecolorsforindex($image, imagecolorat($image, $x, $y));
+                    if ($color['alpha'] > 0) {
+                        $hasAlpha = true;
+                    }
+                }
+            }
+
+            if ($hasAlpha) {
+                $this->logger->info('Watermarker: Image resource has alpha channel, treating as PNG');
+                $actualType = 'image/png';
+            }
+        }
+
+        if (empty($fileExt)) {
+            // If no extension, add one based on media type (preferring the detected type)
+            $typeToUse = $actualType ?: $mediaType;
+            switch ($typeToUse) {
+                case 'image/jpeg':
+                    $file .= '.jpg';
+                    $detectedMimeType = 'image/jpeg';
+                    break;
+                case 'image/png':
+                    $file .= '.png';
+                    $detectedMimeType = 'image/png';
+                    break;
+                case 'image/webp':
+                    $file .= '.webp';
+                    $detectedMimeType = 'image/webp';
+                    break;
+            }
+            $this->logger->info(sprintf('Watermarker: Added extension to file path: %s', $file));
+        } else {
+            // If extension doesn't match media type, decide what format to use
+            $extMimeMap = [
+                'jpg' => 'image/jpeg',
+                'jpeg' => 'image/jpeg',
+                'png' => 'image/png',
+                'webp' => 'image/webp',
+                'gif' => 'image/gif'
+            ];
+
+            $expectedMimeType = isset($extMimeMap[$fileExt]) ? $extMimeMap[$fileExt] : null;
+
+            if ($expectedMimeType && $expectedMimeType != $mediaType) {
+                if ($actualType && $actualType == $expectedMimeType) {
+                    // If detected type matches file extension, use that
+                    $this->logger->info(sprintf(
+                        'Watermarker: Using detected type %s to match file extension %s instead of provided type %s',
+                        $actualType, $fileExt, $mediaType
+                    ));
+                    $detectedMimeType = $actualType;
+                } else {
+                    // Otherwise, prefer the extension's implied type
+                    $this->logger->info(sprintf(
+                        'Watermarker: File has %s extension but media type is %s, saving as %s',
+                        $fileExt, $mediaType, $expectedMimeType
+                    ));
+                    $detectedMimeType = $expectedMimeType;
+                }
+            }
+        }
+
+        // Check image resource validity
+        if (!is_resource($image) && !($image instanceof \GdImage)) {
+            $this->logger->err('Watermarker: Invalid image resource provided');
+            return false;
+        }
+
+        // Ensure directory exists
+        $dir = dirname($file);
+        if (!is_dir($dir)) {
+            $this->logger->err(sprintf('Watermarker: Directory %s does not exist', $dir));
+            return false;
+        }
+
+        if (!is_writable($dir)) {
+            $this->logger->err(sprintf('Watermarker: Directory %s is not writable', $dir));
+            // Try to create a temp file in the system temp directory first, with proper extension
+            $tempFile = tempnam(sys_get_temp_dir(), 'wm_');
+            
+            // Add the file extension based on the detected MIME type
+            $fileExt = $this->getExtensionForMimeType($detectedMimeType);
+            if (!empty($fileExt)) {
+                $tempFileWithExt = $tempFile . '.' . $fileExt;
+                rename($tempFile, $tempFileWithExt);
+                $tempFile = $tempFileWithExt;
+                $this->logger->info(sprintf('Watermarker: Added extension to temp file: %s', $fileExt));
+            }
+            
+            $this->logger->info(sprintf('Watermarker: Using temporary file %s instead', $tempFile));
+            $file = $tempFile;
+        }
+
+        // Use a two-step process for more reliable file writing
+        // 1. First save to a temporary file
+        $tempDir = sys_get_temp_dir();
+        $tempOutput = tempnam($tempDir, 'wm_output_');
+        
+        // Add the file extension based on the detected MIME type
+        $fileExt = $this->getExtensionForMimeType($detectedMimeType);
+        if (!empty($fileExt)) {
+            $tempOutputWithExt = $tempOutput . '.' . $fileExt;
+            rename($tempOutput, $tempOutputWithExt);
+            $tempOutput = $tempOutputWithExt;
+            $this->logger->info(sprintf('Watermarker: Added extension to temp output file: %s (%s)', $fileExt, $tempOutput));
+        }
+
+        // Save based on the detected media type
+        $this->logger->info(sprintf('Watermarker: Using detected MIME type: %s', $detectedMimeType));
+        $savedToTemp = false;
+
+        switch ($detectedMimeType) {
             case 'image/jpeg':
-                return @imagejpeg($image, $file, 95);
-            case 'image/png':
-                return @imagepng($image, $file, 9);
-            case 'image/webp':
-                if (function_exists('imagewebp')) {
-                    return @imagewebp($image, $file, 95);
+                // Check if this is a PNG with transparency being saved as JPG
+                $hasAlpha = false;
+                if (imageistruecolor($image)) {
+                    // Check if the image has alpha channel
+                    for ($x = 0; $x < imagesx($image); $x++) {
+                        for ($y = 0; $y < imagesy($image); $y++) {
+                            $color = imagecolorsforindex($image, imagecolorat($image, $x, $y));
+                            if ($color['alpha'] > 0) {
+                                $hasAlpha = true;
+                                break 2;
+                            }
+                        }
+                    }
+                }
+
+                if ($hasAlpha) {
+                    $this->logger->info('Watermarker: Converting from transparent PNG to JPEG');
+                    // Create a white background for the JPEG
+                    $jpgImage = imagecreatetruecolor(imagesx($image), imagesy($image));
+                    $white = imagecolorallocate($jpgImage, 255, 255, 255);
+                    imagefill($jpgImage, 0, 0, $white);
+
+                    // Copy the PNG onto the white background
+                    imagecopy($jpgImage, $image, 0, 0, 0, 0, imagesx($image), imagesy($image));
+
+                    // Save as JPEG
+                    $result = @imagejpeg($jpgImage, $tempOutput, 95);
+                    imagedestroy($jpgImage);
+                } else {
+                    $result = @imagejpeg($image, $tempOutput, 95);
+                }
+
+                if (!$result) {
+                    $this->logger->err('Watermarker: Failed to save JPEG image to temp file');
+                } else {
+                    $this->logger->info('Watermarker: Successfully saved JPEG image to temp file');
+                    $savedToTemp = true;
                 }
                 break;
+
+            case 'image/png':
+                // Make sure alpha blending and saving is properly set up
+                if (imageistruecolor($image)) {
+                    imagealphablending($image, false);
+                    imagesavealpha($image, true);
+                }
+
+                $result = @imagepng($image, $tempOutput, 9);
+                if (!$result) {
+                    $this->logger->err('Watermarker: Failed to save PNG image to temp file');
+
+                    // Try creating a new PNG image as fallback
+                    $this->logger->info('Watermarker: Trying fallback method to save PNG');
+                    $newImg = imagecreatetruecolor(imagesx($image), imagesy($image));
+                    imagealphablending($newImg, false);
+                    imagesavealpha($newImg, true);
+                    $transparent = imagecolorallocatealpha($newImg, 0, 0, 0, 127);
+                    imagefilledrectangle($newImg, 0, 0, imagesx($image), imagesy($image), $transparent);
+                    imagecopy($newImg, $image, 0, 0, 0, 0, imagesx($image), imagesy($image));
+
+                    $result = @imagepng($newImg, $tempOutput, 9);
+                    imagedestroy($newImg);
+
+                    if ($result) {
+                        $this->logger->info('Watermarker: Successfully saved PNG image to temp file using fallback method');
+                        $savedToTemp = true;
+                    } else {
+                        $this->logger->err('Watermarker: Fallback method also failed to save PNG image to temp file');
+                    }
+                } else {
+                    $this->logger->info('Watermarker: Successfully saved PNG image to temp file with transparency preserved');
+                    $savedToTemp = true;
+                }
+                break;
+
+            case 'image/webp':
+                if (function_exists('imagewebp')) {
+                    // Set up for transparency if needed
+                    if (imageistruecolor($image)) {
+                        imagealphablending($image, false);
+                        imagesavealpha($image, true);
+                    }
+
+                    $result = @imagewebp($image, $tempOutput, 95);
+                    if (!$result) {
+                        $this->logger->err('Watermarker: Failed to save WebP image to temp file');
+
+                        // Try fallback to PNG if WebP fails
+                        $this->logger->info('Watermarker: Trying to save as PNG instead of WebP');
+                        $result = @imagepng($image, $tempOutput, 9);
+
+                        if ($result) {
+                            $this->logger->info('Watermarker: Successfully saved as PNG to temp file instead of WebP');
+                            $savedToTemp = true;
+                        }
+                    } else {
+                        $this->logger->info('Watermarker: Successfully saved WebP image to temp file');
+                        $savedToTemp = true;
+                    }
+                } else {
+                    $this->logger->err('Watermarker: WebP support not available in PHP');
+
+                    // Fallback to PNG if WebP is not supported
+                    $this->logger->info('Watermarker: Falling back to PNG since WebP is not supported');
+                    if (imageistruecolor($image)) {
+                        imagealphablending($image, false);
+                        imagesavealpha($image, true);
+                    }
+
+                    $result = @imagepng($image, $tempOutput, 9);
+
+                    if ($result) {
+                        $this->logger->info('Watermarker: Successfully saved as PNG to temp file');
+                        $savedToTemp = true;
+                    }
+                }
+                break;
+
+            default:
+                // Try saving as PNG for unsupported types
+                $this->logger->info(sprintf('Watermarker: Trying to save unsupported type %s as PNG', $mediaType));
+                if (imageistruecolor($image)) {
+                    imagealphablending($image, false);
+                    imagesavealpha($image, true);
+                }
+
+                $result = @imagepng($image, $tempOutput, 9);
+                if ($result) {
+                    $this->logger->info('Watermarker: Successfully saved unsupported type as PNG to temp file');
+                    $savedToTemp = true;
+                } else {
+                    $this->logger->err(sprintf('Watermarker: Cannot save unsupported media type to temp file: %s', $mediaType));
+                }
+                break;
+        }
+
+        // If temp file saved successfully, check that it has content
+        if ($savedToTemp) {
+            if (!file_exists($tempOutput) || filesize($tempOutput) < 100) {
+                $this->logger->err(sprintf(
+                    'Watermarker: Temp file is empty or too small (size: %d bytes)',
+                    file_exists($tempOutput) ? filesize($tempOutput) : 0
+                ));
+                @unlink($tempOutput);
+                return false;
+            }
+
+            // Verify the temp file is readable
+            if (!is_readable($tempOutput)) {
+                $this->logger->err('Watermarker: Temp file is not readable');
+                @unlink($tempOutput);
+                return false;
+            }
+
+            $this->logger->info(sprintf(
+                'Watermarker: Temp file created successfully (size: %d bytes)',
+                filesize($tempOutput)
+            ));
+
+            // 2. Copy from temp file to final destination
+            $success = false;
+
+            // Try direct file_put_contents to avoid permission issues
+            $fileContents = file_get_contents($tempOutput);
+            if ($fileContents !== false) {
+                $bytesWritten = file_put_contents($file, $fileContents);
+                if ($bytesWritten !== false && $bytesWritten > 0) {
+                    $this->logger->info(sprintf(
+                        'Watermarker: Successfully wrote %d bytes to final file using file_put_contents',
+                        $bytesWritten
+                    ));
+                    $success = true;
+                } else {
+                    $this->logger->err('Watermarker: Failed to write to final file using file_put_contents');
+
+                    // Try copy as fallback
+                    if (@copy($tempOutput, $file)) {
+                        $this->logger->info('Watermarker: Successfully copied to final file using copy()');
+                        $success = true;
+                    } else {
+                        $this->logger->err(sprintf(
+                            'Watermarker: All file write methods failed for file: %s (error: %s)',
+                            $file,
+                            error_get_last()['message'] ?? 'Unknown error'
+                        ));
+                    }
+                }
+            } else {
+                $this->logger->err('Watermarker: Failed to read temp file contents');
+
+                // Try copy as fallback
+                if (@copy($tempOutput, $file)) {
+                    $this->logger->info('Watermarker: Successfully copied to final file using copy()');
+                    $success = true;
+                } else {
+                    $this->logger->err(sprintf(
+                        'Watermarker: Copy failed for file: %s (error: %s)',
+                        $file,
+                        error_get_last()['message'] ?? 'Unknown error'
+                    ));
+                }
+            }
+
+            // Clean up temp file
+            @unlink($tempOutput);
+
+            // Verify final file
+            if ($success && file_exists($file)) {
+                $finalSize = filesize($file);
+                $this->logger->info(sprintf('Watermarker: Final file created successfully (size: %d bytes)', $finalSize));
+
+                if ($finalSize < 100) {
+                    $this->logger->err('Watermarker: Final file is too small, likely corrupted');
+                    return false;
+                }
+
+                return true;
+            }
+        }
+
+        // Clean up
+        if (file_exists($tempOutput)) {
+            @unlink($tempOutput);
         }
 
         return false;
@@ -701,7 +1463,7 @@ class WatermarkService
      * @param string $position
      * @param float $opacity
      */
-    protected function overlayWatermark($baseImage, $watermarkImage, $position, $opacity)
+    public function overlayWatermark($baseImage, $watermarkImage, $position, $opacity)
     {
         // Get dimensions
         $baseWidth = imagesx($baseImage);
@@ -709,18 +1471,27 @@ class WatermarkService
         $watermarkWidth = imagesx($watermarkImage);
         $watermarkHeight = imagesy($watermarkImage);
 
+        $this->logger->info(sprintf('Watermarker: Overlaying watermark (position: %s, opacity: %.2f)',
+            $position, $opacity));
+
         // Calculate position
         $x = 0;
         $y = 0;
 
         // Handle full width watermark
         if ($position === 'bottom-full') {
+            $this->logger->info('Watermarker: Using full-width watermark positioning');
+
             // For full width, we need to resize the watermark
             $newWatermarkHeight = $watermarkHeight;
             $newWatermarkWidth = $baseWidth;
 
             // Create a new image with the right dimensions
             $newWatermark = imagecreatetruecolor($newWatermarkWidth, $newWatermarkHeight);
+            if (!$newWatermark) {
+                $this->logger->err('Watermarker: Failed to create new watermark image for full-width');
+                return;
+            }
 
             // Preserve transparency for the new image
             imagealphablending($newWatermark, false);
@@ -732,6 +1503,9 @@ class WatermarkService
             // Resize the watermark to full width while maintaining aspect ratio
             $scaleRatio = $baseWidth / $watermarkWidth;
             $scaledHeight = (int)($watermarkHeight * $scaleRatio);
+
+            $this->logger->info(sprintf('Watermarker: Resizing watermark from %dx%d to %dx%d',
+                $watermarkWidth, $watermarkHeight, $baseWidth, $scaledHeight));
 
             // Only resize if the watermark is smaller than the base image width
             if ($watermarkWidth < $baseWidth) {
@@ -746,6 +1520,8 @@ class WatermarkService
                 // Place at the bottom
                 $x = 0;
                 $y = (int)($baseHeight - $scaledHeight);
+
+                $this->logger->info(sprintf('Watermarker: Placing full-width watermark at position [%d,%d]', $x, $y));
 
                 // Clean up original watermark
                 imagedestroy($watermarkImage);
@@ -764,6 +1540,7 @@ class WatermarkService
                 return;
             } else {
                 // If watermark is already wider, just place it at the bottom
+                $this->logger->info('Watermarker: Watermark is already wider than image, using bottom-center placement');
                 $position = 'bottom-center';
                 imagedestroy($newWatermark);
             }
@@ -802,17 +1579,37 @@ class WatermarkService
         $x = (int)$x;
         $y = (int)$y;
 
+        $this->logger->info(sprintf('Watermarker: Placing watermark at position [%d,%d]', $x, $y));
+
         // Apply transparency if needed
         imagealphablending($baseImage, true);
         imagesavealpha($baseImage, true);
 
         // For PNG watermarks with transparency
         if (imageistruecolor($watermarkImage)) {
+            $this->logger->info('Watermarker: Configuring transparency for truecolor watermark');
             imagealphablending($watermarkImage, true);
             imagesavealpha($watermarkImage, true);
         }
 
-        // Copy with alpha blending for opacity
-        imagecopymerge($baseImage, $watermarkImage, $x, $y, 0, 0, $watermarkWidth, $watermarkHeight, (int)($opacity * 100));
+        // Try to use better alpha-aware copy function for PNGs if available
+        if (function_exists('imagecopy') && $opacity >= 1.0) {
+            $this->logger->info('Watermarker: Using imagecopy for full opacity watermark');
+            // For full opacity, use imagecopy which preserves alpha better
+            imagecopy(
+                $baseImage, $watermarkImage,
+                $x, $y, 0, 0,
+                $watermarkWidth, $watermarkHeight
+            );
+        } else {
+            $this->logger->info(sprintf('Watermarker: Using imagecopymerge with opacity %.0f%%', $opacity * 100));
+            // Copy with alpha blending for opacity
+            imagecopymerge(
+                $baseImage, $watermarkImage,
+                $x, $y, 0, 0,
+                $watermarkWidth, $watermarkHeight,
+                (int)($opacity * 100)
+            );
+        }
     }
 }

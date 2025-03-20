@@ -43,23 +43,24 @@ $escape = $this->plugin('escapeHtml');
     <tbody>
     <?php foreach ($watermarks as $watermark): ?>
         <?php
-            $media = null;
+            $asset = null;
             try {
-                $media = $this->api()->read('media', $watermark['media_id'])->getContent();
+                $asset = $this->api()->read('assets', $watermark['media_id'])->getContent();
             } catch (\Exception $e) {
-                // Media may have been deleted
+                // Asset may have been deleted
             }
         ?>
         <tr>
             <td>
                 <?php echo $escape($watermark['name']); ?>
             </td>
-            <td>
-                <?php if ($media): ?>
-                <img src="<?php echo $escape($media->thumbnailUrl('square')); ?>" alt="<?php echo $escape($watermark['name']); ?>" style="max-width: 100px;">
+            <td class="watermarker-preview-cell">
+                <?php if ($asset): ?>
+                <div class="watermarker-preview">
+                    <img src="<?php echo $escape($asset->assetUrl()); ?>" alt="<?php echo $escape($watermark['name']); ?>">
+                </div>
                 <?php else: ?>
-                <span class="error"><?php echo $this->translate('Media not found'); ?></span>
-                <a href="<?php echo $this->url('admin/watermarker', ['action' => 'edit', 'id' => $watermark['id']]); ?>" class="button">Update Media</a>
+                <span class="no-image"><?php echo $this->translate('No preview'); ?></span>
                 <?php endif; ?>
             </td>
             <td>
