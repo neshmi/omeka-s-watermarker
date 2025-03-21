@@ -221,51 +221,68 @@ class WatermarkService
             return null;
         }
 
-        // Get settings for this orientation from the database
-        $sql = "SELECT * FROM watermark_setting WHERE (orientation = :orientation OR orientation = 'all') AND enabled = 1";
-        $stmt = $this->connection->prepare($sql);
-        $stmt->bindValue('orientation', $orientation);
-        $stmt->execute();
-
+        // Get enabled watermarks
+        $sql = "SELECT * FROM watermark_setting WHERE enabled = 1";
+        $stmt = $this->connection->query($sql);
         $watermarks = $stmt->fetchAll(\PDO::FETCH_ASSOC);
+        
         if (empty($watermarks)) {
-            $this->logger->info(sprintf(
-                'No watermark configuration found for orientation: %s',
-                $orientation
-            ));
+            $this->logger->info('No enabled watermark configurations found');
             return null;
         }
-
-        // Try each watermark until we find one with valid media
+        
+        // Try each watermark
         foreach ($watermarks as $watermark) {
             $this->logger->info(sprintf(
-                'Checking watermark configuration ID %s for orientation %s',
-                $watermark['id'],
-                $orientation
+                'Checking watermark configuration ID %s',
+                $watermark['id']
             ));
-
-            // Get the asset instead of media
+            
+            // Find a variant that matches the orientation
+            $variantSql = "SELECT * FROM watermark_variant 
+                          WHERE watermark_id = :watermark_id 
+                          AND (orientation = :orientation OR orientation = 'all')
+                          ORDER BY FIELD(orientation, :orientation, 'all')"; // Prefer exact match over 'all'
+            
+            $variantStmt = $this->connection->prepare($variantSql);
+            $variantStmt->bindValue('watermark_id', $watermark['id']);
+            $variantStmt->bindValue('orientation', $orientation);
+            $variantStmt->execute();
+            
+            $variant = $variantStmt->fetch(\PDO::FETCH_ASSOC);
+            
+            if (!$variant) {
+                $this->logger->info(sprintf(
+                    'No matching variant found for watermark ID %s and orientation %s',
+                    $watermark['id'],
+                    $orientation
+                ));
+                continue;
+            }
+            
+            // Get the asset
             try {
-                $assetId = $watermark['media_id']; // We kept the column name as media_id
+                $assetId = $variant['media_id'];
                 $api = $this->serviceLocator->get('Omeka\ApiManager');
                 $watermarkAsset = $api->read('assets', $assetId)->getContent();
 
                 $this->logger->info(sprintf(
-                    'Found asset ID %s for watermark',
+                    'Found asset ID %s for watermark variant',
                     $assetId
                 ));
 
-                // If we got here, the asset exists
-                return $watermark;
+                // Merge watermark and variant data
+                $watermarkConfig = array_merge($watermark, $variant);
+                return $watermarkConfig;
 
             } catch (\Exception $e) {
                 $this->logger->err(sprintf(
                     'Could not load watermark asset %s: %s',
-                    $watermark['media_id'],
+                    $variant['media_id'],
                     $e->getMessage()
                 ));
 
-                // Log the error and continue to the next watermark
+                // Continue to the next watermark
                 continue;
             }
         }

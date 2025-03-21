@@ -1,0 +1,40 @@
+<?php
+// Minimal add template with no complex form rendering
+$this->htmlElement('body')->appendAttribute('class', 'watermarker add');
+
+// Attempt to load CSS directly
+$cssPath = $this->assetUrl('css/watermarker.css', 'Watermarker');
+echo '<link rel="stylesheet" href="' . $cssPath . '">';
+
+// Attempt to load JS directly
+$jsPath = $this->assetUrl('js/watermarker.js', 'Watermarker');
+echo '<script src="' . $jsPath . '"></script>';
+?>
+
+<?php echo $this->pageTitle($this->translate('Add Watermark - Minimal Test'), 1, $this->translate('Media Watermarking')); ?>
+
+<p>This is a minimal test template with a basic form structure.</p>
+
+<div style="padding: 50px; margin: 30px 0; border: 4px dashed #f00; font-size: 20px; text-align: center;">
+    If you can see this, the template is rendering correctly.
+</div>
+
+<form method="post" style="border: 2px solid #00f; padding: 20px; margin: 20px 0;">
+    <input type="text" name="test_field" value="test value">
+    <button type="submit">Submit Test</button>
+</form>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Minimal template loaded');
+    
+    // Create a visible debug message
+    var debugDiv = document.createElement('div');
+    debugDiv.style.padding = '10px';
+    debugDiv.style.margin = '10px 0';
+    debugDiv.style.backgroundColor = '#ffe';
+    debugDiv.style.border = '1px solid #aa0';
+    debugDiv.innerText = 'Debug info: Template is rendering, JavaScript is working';
+    document.body.appendChild(debugDiv);
+});
+</script>

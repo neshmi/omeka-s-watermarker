@@ -52,7 +52,9 @@ return [
     'form_elements' => [
         'invokables' => [
             Form\ConfigForm::class => Form\ConfigForm::class,
-            Form\WatermarkForm::class => Form\WatermarkForm::class,
+        ],
+        'factories' => [
+            Form\WatermarkForm::class => Service\Form\WatermarkFormFactory::class,
         ],
     ],
     'service_manager' => [
@@ -80,5 +82,10 @@ return [
             'apply_on_import' => true,
         ],
     ],
-    // No need to register jobs anymore since we're not using the job system
+    'job' => [
+        'dispatcher' => [
+            'Watermarker\\Job\\MigrateWatermarks' => Watermarker\Job\MigrateWatermarks::class,
+            'Watermarker\\Job\\ReprocessImages' => Watermarker\Job\ReprocessImages::class,
+        ],
+    ]
 ];

@@ -16,6 +16,8 @@ $escape = $this->plugin('escapeHtml');
     <?php echo $this->hyperlink($this->translate('Configure module'), $this->url('admin/watermarker', ['action' => 'config']), ['class' => 'button']); ?>
     <?php echo $this->hyperlink($this->translate('Test on recent media'), $this->url('admin/watermarker', ['action' => 'test']), ['class' => 'button']); ?>
     <?php echo $this->hyperlink($this->translate('Check configurations'), $this->url('admin/watermarker', ['action' => 'check']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Migrate legacy watermarks'), $this->url('admin/watermarker', ['action' => 'migrate']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Reprocess media'), $this->url('admin/watermarker', ['action' => 'reprocess']), ['class' => 'button']); ?>
 </div>
 
 <?php if (empty($watermarks)): ?>
@@ -28,66 +30,87 @@ $escape = $this->plugin('escapeHtml');
     <?php echo $this->pagination(); ?>
 </div>
 
-<table class="tablesaw" data-tablesaw-mode="stack">
-    <thead>
-        <tr>
-            <th><?php echo $this->translate('Name'); ?></th>
-            <th><?php echo $this->translate('Preview'); ?></th>
-            <th><?php echo $this->translate('Orientation'); ?></th>
-            <th><?php echo $this->translate('Position'); ?></th>
-            <th><?php echo $this->translate('Opacity'); ?></th>
-            <th><?php echo $this->translate('Status'); ?></th>
-            <th><?php echo $this->translate('Actions'); ?></th>
-        </tr>
-    </thead>
-    <tbody>
+<div class="watermarker-configs">
     <?php foreach ($watermarks as $watermark): ?>
-        <?php
-            $asset = null;
-            try {
-                $asset = $this->api()->read('assets', $watermark['media_id'])->getContent();
-            } catch (\Exception $e) {
-                // Asset may have been deleted
-            }
-        ?>
-        <tr>
-            <td>
-                <?php echo $escape($watermark['name']); ?>
-            </td>
-            <td class="watermarker-preview-cell">
-                <?php if ($asset): ?>
-                <div class="watermarker-preview">
-                    <img src="<?php echo $escape($asset->assetUrl()); ?>" alt="<?php echo $escape($watermark['name']); ?>">
+        <div class="watermarker-config">
+            <div class="watermarker-config-header">
+                <h4>
+                    <?php echo $escape($watermark['name']); ?>
+                    <span class="watermarker-status <?php echo $watermark['enabled'] ? 'enabled' : 'disabled'; ?>">
+                        (<?php echo $watermark['enabled'] ? $this->translate('Enabled') : $this->translate('Disabled'); ?>)
+                    </span>
+                </h4>
+                <div class="watermarker-actions">
+                    <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'edit', 'id' => $watermark['id']]), [
+                        'class' => 'o-icon-edit',
+                        'title' => $this->translate('Edit'),
+                    ]); ?>
+                    <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'delete', 'id' => $watermark['id']]), [
+                        'class' => 'o-icon-delete',
+                        'title' => $this->translate('Delete'),
+                    ]); ?>
                 </div>
+            </div>
+            
+            <div class="watermarker-variants">
+                <?php if (empty($watermark['variants'])): ?>
+                    <p class="no-variants"><?php echo $this->translate('No variants configured'); ?></p>
                 <?php else: ?>
-                <span class="no-image"><?php echo $this->translate('No preview'); ?></span>
+                    <div class="watermarker-grid">
+                        <?php foreach ($watermark['variants'] as $variant): ?>
+                            <?php
+                                $asset = null;
+                                try {
+                                    $asset = $this->api()->read('assets', $variant['media_id'])->getContent();
+                                } catch (\Exception $e) {
+                                    // Asset may have been deleted
+                                }
+                                
+                                $positionLabels = [
+                                    'top-left' => 'Top Left',
+                                    'top-right' => 'Top Right',
+                                    'bottom-left' => 'Bottom Left',
+                                    'bottom-right' => 'Bottom Right',
+                                    'center' => 'Center',
+                                    'bottom-full' => 'Bottom Full Width'
+                                ];
+                                $positionLabel = isset($positionLabels[$variant['position']]) 
+                                    ? $escape($positionLabels[$variant['position']]) 
+                                    : $escape($variant['position']);
+                            ?>
+                            <div class="watermarker-variant-card <?php echo $escape($variant['orientation']); ?>">
+                                <div class="watermarker-variant-card-header">
+                                    <span class="watermarker-orientation <?php echo $escape($variant['orientation']); ?>">
+                                        <?php echo $escape(ucfirst($variant['orientation'])); ?>
+                                    </span>
+                                </div>
+                                <div class="watermarker-variant-card-preview">
+                                    <?php if ($asset): ?>
+                                    <div class="watermarker-preview">
+                                        <img src="<?php echo $escape($asset->assetUrl()); ?>" 
+                                             alt="<?php echo $escape($watermark['name']); ?> (<?php echo $escape($variant['orientation']); ?>)">
+                                    </div>
+                                    <?php else: ?>
+                                    <span class="no-image"><?php echo $this->translate('No preview'); ?></span>
+                                    <?php endif; ?>
+                                </div>
+                                <div class="watermarker-variant-card-details">
+                                    <div class="watermarker-variant-detail">
+                                        <span class="detail-label"><?php echo $this->translate('Position'); ?>:</span>
+                                        <span class="detail-value"><?php echo $positionLabel; ?></span>
+                                    </div>
+                                    <div class="watermarker-variant-detail">
+                                        <span class="detail-label"><?php echo $this->translate('Opacity'); ?>:</span>
+                                        <span class="detail-value"><?php echo $escape($variant['opacity']); ?></span>
+                                    </div>
+                                </div>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
                 <?php endif; ?>
-            </td>
-            <td>
-                <?php echo $escape($watermark['orientation']); ?>
-            </td>
-            <td>
-                <?php echo $escape($watermark['position']); ?>
-            </td>
-            <td>
-                <?php echo $escape($watermark['opacity']); ?>
-            </td>
-            <td>
-                <?php echo $watermark['enabled'] ? $this->translate('Enabled') : $this->translate('Disabled'); ?>
-            </td>
-            <td>
-                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'edit', 'id' => $watermark['id']]), [
-                    'class' => 'o-icon-edit',
-                    'title' => $this->translate('Edit'),
-                ]); ?>
-                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'delete', 'id' => $watermark['id']]), [
-                    'class' => 'o-icon-delete',
-                    'title' => $this->translate('Delete'),
-                ]); ?>
-            </td>
-        </tr>
+            </div>
+        </div>
     <?php endforeach; ?>
-    </tbody>
-</table>
+</div>
 
 <?php endif; ?>

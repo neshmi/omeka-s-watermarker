@@ -52,6 +52,7 @@ class Module extends AbstractModule
      */
     public function getConfig()
     {
+        error_log('Watermarker: Module loading configuration');
         return include __DIR__ . '/config/module.config.php';
     }
 
@@ -65,18 +66,31 @@ class Module extends AbstractModule
         $connection = $serviceLocator->get('Omeka\Connection');
 
         // Create watermark table
+        // Create watermark main table
         $connection->exec("
             CREATE TABLE watermark_setting (
                 id INT AUTO_INCREMENT NOT NULL,
                 name VARCHAR(255) NOT NULL,
-                media_id INT NOT NULL,
-                orientation VARCHAR(50) NOT NULL,
-                position VARCHAR(50) NOT NULL,
-                opacity DECIMAL(3,2) NOT NULL,
                 enabled TINYINT(1) NOT NULL,
                 created DATETIME NOT NULL,
                 modified DATETIME DEFAULT NULL,
                 PRIMARY KEY (id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        ");
+        
+        // Create watermark variants table
+        $connection->exec("
+            CREATE TABLE watermark_variant (
+                id INT AUTO_INCREMENT NOT NULL,
+                watermark_id INT NOT NULL,
+                orientation VARCHAR(50) NOT NULL,
+                media_id INT NOT NULL,
+                position VARCHAR(50) NOT NULL,
+                opacity DECIMAL(3,2) NOT NULL,
+                created DATETIME NOT NULL,
+                modified DATETIME DEFAULT NULL,
+                PRIMARY KEY (id),
+                FOREIGN KEY (watermark_id) REFERENCES watermark_setting (id) ON DELETE CASCADE
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         ");
     }
@@ -89,6 +103,11 @@ class Module extends AbstractModule
     public function uninstall(ServiceLocatorInterface $serviceLocator)
     {
         $connection = $serviceLocator->get('Omeka\Connection');
+        
+        // Drop variant table first (foreign key constraints)
+        $connection->exec('DROP TABLE IF EXISTS watermark_variant');
+        
+        // Then drop the main table
         $connection->exec('DROP TABLE IF EXISTS watermark_setting');
     }
 
@@ -155,6 +174,16 @@ class Module extends AbstractModule
             'view.layout',
             [$this, 'addAdminNavigation']
         );
+        
+        // Add assets to all Watermarker module controllers
+        $sharedEventManager->attach(
+            'Watermarker\Controller\Admin\Index',
+            'view.layout',
+            function($event) {
+                $view = $event->getTarget();
+                $this->addAssets($view);
+            }
+        );
 
         // Enable this for debugging only - it generates too much noise in logs
         /*
@@ -188,8 +217,23 @@ class Module extends AbstractModule
     public function addAdminNavigation(Event $event)
     {
         $view = $event->getTarget();
-        $view->headLink()->appendStylesheet($view->assetUrl('css/watermark.css', 'Watermarker'));
-        $view->headScript()->appendFile($view->assetUrl('js/watermark.js', 'Watermarker'));
+        
+        // Add CSS and JS assets for all admin pages
+        $this->addAssets($view);
+    }
+    
+    /**
+     * Add assets to the view
+     * 
+     * @param PhpRenderer $view
+     */
+    protected function addAssets($view)
+    {
+        // Always add CSS for the admin menu item
+        $view->headLink()->appendStylesheet($view->assetUrl('css/watermarker.css', 'Watermarker'));
+        
+        // Always add JS for watermarker module
+        $view->headScript()->appendFile($view->assetUrl('js/watermarker.js', 'Watermarker'));
     }
 
     /**

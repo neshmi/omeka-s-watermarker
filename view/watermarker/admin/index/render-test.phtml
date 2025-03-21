@@ -1,0 +1,38 @@
+<?php
+// Ultra-simple template for debugging
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
+
+// Explicitly add body class
+$this->htmlElement('body')->appendAttribute('class', 'watermarker render-test');
+
+// Attempt to load CSS directly
+$cssPath = $this->assetUrl('css/watermarker.css', 'Watermarker');
+echo '<link rel="stylesheet" href="' . $cssPath . '">';
+
+// Basic HTML without any complex PHP or template helpers
+echo '<!DOCTYPE html>';
+echo '<html>';
+echo '<head>';
+echo '<title>Watermarker Render Test</title>';
+echo '</head>';
+echo '<body>';
+echo '<h1 style="color:red; margin: 30px; padding: 20px; border: 3px solid red; text-align:center; font-size: 24px;">RENDERING TEST SUCCESSFUL</h1>';
+
+echo '<div style="padding: 20px; margin: 20px; border: 2px solid blue; background: #f5f5f5;">';
+echo '<h2>Debug Information</h2>';
+echo '<p>Current Time: ' . date('Y-m-d H:i:s') . '</p>';
+echo '<p>Test Data: ' . (isset($testData) ? $testData : 'No test data') . '</p>';
+echo '<p>Timestamp: ' . (isset($timestamp) ? date('Y-m-d H:i:s', $timestamp) : 'No timestamp') . '</p>';
+echo '</div>';
+
+echo '<div style="padding: 20px; margin: 20px; border: 2px solid green;">';
+echo '<h2>View Variables</h2>';
+echo '<pre>';
+var_dump(get_defined_vars());
+echo '</pre>';
+echo '</div>';
+
+echo '</body>';
+echo '</html>';
+?>

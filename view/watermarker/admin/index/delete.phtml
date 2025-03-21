@@ -3,6 +3,7 @@
  * @var \Laminas\View\Renderer\PhpRenderer $this
  * @var \Omeka\Form\ConfirmForm $form
  * @var array $watermark
+ * @var int $variantCount
  */
 $this->htmlElement('body')->appendAttribute('class', 'watermarker delete');
 $form->prepare();
@@ -16,6 +17,14 @@ $escape = $this->plugin('escapeHtml');
         $this->translate('Are you sure you want to delete the watermark "%s"?'),
         $escape($watermark['name'])
     ); ?></p>
+    
+    <?php if (isset($variantCount) && $variantCount > 0): ?>
+    <p><?php echo sprintf(
+        $this->translate('This watermark has %d variant(s) that will also be deleted.'),
+        $variantCount
+    ); ?></p>
+    <?php endif; ?>
+    
     <p class="warning"><?php echo $this->translate('This action cannot be undone.'); ?></p>
 </div>
 
