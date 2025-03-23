@@ -1,0 +1,42 @@
+<?php
+/**
+ * @var \Omeka\Api\Representation\ItemRepresentation $item
+ * @var array|null $assignment
+ */
+// Bypass the router completely with a hardcoded URL
+$assignUrl = '/admin/watermarker/assign/item/' . $item->id();
+
+// Get watermark set info if assigned
+$watermarkInfo = null;
+if ($assignment && $assignment['watermark_set_id']) {
+    $connection = $this->api()->read('items', $item->id())->getAdapter()->getServiceLocator()->get('Omeka\Connection');
+    $sql = "SELECT name FROM watermark_set WHERE id = :id";
+    $stmt = $connection->prepare($sql);
+    $stmt->bindValue('id', $assignment['watermark_set_id']);
+    $stmt->execute();
+    $setInfo = $stmt->fetch();
+    
+    if ($setInfo) {
+        $watermarkInfo = sprintf('Using watermark set: "%s"', $setInfo['name']);
+    }
+} else if ($assignment && $assignment['watermark_set_id'] === null) {
+    $watermarkInfo = 'Watermarking disabled for this item';
+} else {
+    $watermarkInfo = 'Using default watermark settings';
+}
+?>
+
+<div id="watermarker" class="section">
+    <h3><?php echo $this->translate('Watermarking'); ?></h3>
+    
+    <div class="property">
+        <h4><?php echo $this->translate('Current Watermark'); ?></h4>
+        <div class="values">
+            <div class="value"><?php echo $this->escapeHtml($watermarkInfo); ?></div>
+        </div>
+    </div>
+    
+    <a href="<?php echo $assignUrl; ?>" class="button">
+        <?php echo $this->translate('Edit Watermark Settings'); ?>
+    </a>
+</div>

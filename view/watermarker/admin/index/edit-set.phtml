@@ -1,0 +1,147 @@
+<?php
+/**
+ * @var \Laminas\Form\Form $form
+ * @var array $set
+ * @var array $watermarks
+ */
+$this->htmlElement('body')->appendAttribute('class', 'watermarker edit-set');
+$this->headLink()->prependStylesheet($this->assetUrl('css/watermarker.css', 'Watermarker'));
+$this->headScript()->appendFile($this->assetUrl('js/watermarker.js', 'Watermarker'));
+$form->prepare();
+$escape = $this->plugin('escapeHtml');
+?>
+
+<?php echo $this->pageTitle(sprintf($this->translate('Edit Watermark Set: %s'), $escape($set['name'])), 1, $this->translate('Watermarker')); ?>
+
+<div id="page-actions">
+    <?php echo $this->hyperlink($this->translate('Back to sets'), '/admin/watermarker', ['class' => 'button']); ?>
+</div>
+
+<div class="breadcrumbs">
+    <a href="/admin/watermarker"><?php echo $this->translate('Watermark Sets'); ?></a> &gt;
+    <span><?php echo $escape($set['name']); ?></span>
+</div>
+
+<div class="watermark-set-info">
+    <h2><?php echo $this->translate('Set Properties'); ?></h2>
+    <p class="explanation">
+        <?php echo $this->translate('Configure this watermark set\'s properties. Once configured, add watermarks for different image orientations.'); ?>
+    </p>
+
+    <?php echo $this->form()->openTag($form); ?>
+    <div id="page-content">
+        <?php echo $this->formCollection($form); ?>
+    </div>
+    <div class="page-actions">
+        <?php echo $this->formSubmit($form->get('submit')); ?>
+    </div>
+    <?php echo $this->form()->closeTag(); ?>
+</div>
+
+<div class="watermark-list">
+    <h2><?php echo $this->translate('Watermarks in this Set'); ?></h2>
+
+    <?php if (empty($watermarks)): ?>
+    <div class="no-resources">
+        <p><?php echo $this->translate('No watermarks have been added to this set yet.'); ?></p>
+        <p><?php echo $this->translate('A complete watermark set should include watermarks for different image orientations (landscape, portrait, square).'); ?></p>
+        <a href="/admin/watermarker/add?set_id=<?php echo $set['id']; ?>" class="button"><?php echo $this->translate('Add your first watermark'); ?></a>
+    </div>
+    <?php else: ?>
+    <p class="explanation">
+        <?php echo $this->translate('These watermarks will be applied to images based on their orientation. For best results, configure watermarks for all image types.'); ?>
+    </p>
+
+    <table class="tablesaw" data-tablesaw-mode="stack">
+        <thead>
+            <tr>
+                <th><?php echo $this->translate('Orientation'); ?></th>
+                <th><?php echo $this->translate('Preview'); ?></th>
+                <th><?php echo $this->translate('Position'); ?></th>
+                <th><?php echo $this->translate('Opacity'); ?></th>
+                <th><?php echo $this->translate('Actions'); ?></th>
+            </tr>
+        </thead>
+        <tbody>
+        <?php foreach ($watermarks as $watermark): ?>
+            <?php
+                $asset = null;
+                try {
+                    $asset = $this->api()->read('assets', $watermark['media_id'])->getContent();
+                } catch (\Exception $e) {
+                    // Asset may have been deleted
+                }
+                
+                // Translate orientation type to more readable format
+                $typeLabels = [
+                    'landscape' => $this->translate('Landscape Images'),
+                    'portrait' => $this->translate('Portrait Images'),
+                    'square' => $this->translate('Square Images'),
+                    'all' => $this->translate('All Images')
+                ];
+                $typeLabel = isset($typeLabels[$watermark['type']]) ? $typeLabels[$watermark['type']] : $watermark['type'];
+                
+                // Get position label
+                $positionLabels = [
+                    'top-left' => $this->translate('Top Left'),
+                    'top-right' => $this->translate('Top Right'),
+                    'bottom-left' => $this->translate('Bottom Left'),
+                    'bottom-right' => $this->translate('Bottom Right'),
+                    'center' => $this->translate('Center'),
+                    'bottom-center' => $this->translate('Bottom Center'),
+                    'bottom-full' => $this->translate('Bottom Full Width')
+                ];
+                $positionLabel = isset($positionLabels[$watermark['position']]) ? 
+                    $positionLabels[$watermark['position']] : $watermark['position'];
+            ?>
+            <tr>
+                <td>
+                    <strong><?php echo $escape($typeLabel); ?></strong>
+                </td>
+                <td class="watermarker-preview-cell">
+                    <?php if ($asset): ?>
+                    <div class="watermarker-preview">
+                        <img src="<?php echo $escape($asset->assetUrl()); ?>" alt="<?php echo $escape($typeLabel); ?>">
+                    </div>
+                    <?php else: ?>
+                    <span class="no-image"><?php echo $this->translate('No preview'); ?></span>
+                    <?php endif; ?>
+                </td>
+                <td>
+                    <?php echo $escape($positionLabel); ?>
+                </td>
+                <td>
+                    <?php echo $watermark['opacity'] * 100; ?>%
+                </td>
+                <td>
+                    <?php echo $this->hyperlink('', '/admin/watermarker/edit/' . $watermark['id'], [
+                        'class' => 'o-icon-edit',
+                        'title' => $this->translate('Edit'),
+                    ]); ?>
+                    <?php echo $this->hyperlink('', '/admin/watermarker/delete/' . $watermark['id'], [
+                        'class' => 'o-icon-delete',
+                        'title' => $this->translate('Delete'),
+                    ]); ?>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+        <div class="table-footer">
+            <?php echo $this->hyperlink($this->translate('Add new watermark'), '/admin/watermarker/add?set_id=' . $set['id'], ['class' => 'button primary']); ?>
+            <!-- Debug info -->
+            <div class="debug-info" style="display: none;">
+                <p>Set ID: <?php echo $set['id']; ?></p>
+                <p>URL: /admin/watermarker/add?set_id=<?php echo $set['id']; ?></p>
+            </div>
+        </div>
+    <?php endif; ?>
+</div>
+
+<style>
+.table-footer {
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid #dfdfdf;
+}
+</style>

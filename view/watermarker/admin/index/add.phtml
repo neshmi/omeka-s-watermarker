@@ -2,21 +2,95 @@
 /**
  * @var \Laminas\View\Renderer\PhpRenderer $this
  * @var \Watermarker\Form\WatermarkForm $form
+ * @var array $set
  */
 $this->htmlElement('body')->appendAttribute('class', 'watermarker add');
 $this->headLink()->prependStylesheet($this->assetUrl('css/watermarker.css', 'Watermarker'));
 $this->headScript()->appendFile($this->assetUrl('js/watermarker.js', 'Watermarker'));
 $form->prepare();
+$escape = $this->plugin('escapeHtml');
 ?>
 
-<?php echo $this->pageTitle($this->translate('Add Watermark'), 1, $this->translate('Media Watermarking')); ?>
-
-<?php echo $this->form()->openTag($form); ?>
+<?php echo $this->pageTitle(sprintf($this->translate('Add Watermark to "%s"'), $escape($set['name'])), 1, $this->translate('Watermarker')); ?>
 
 <div id="page-actions">
-    <button type="submit"><?php echo $this->translate('Save'); ?></button>
+    <?php echo $this->hyperlink($this->translate('Cancel'), '/admin/watermarker/editSet/' . $set['id'], ['class' => 'button']); ?>
+    <button type="submit" form="watermark-form" class="button primary"><?php echo $this->translate('Save watermark'); ?></button>
 </div>
 
-<?php echo $this->formCollection($form, false); ?>
+<div class="breadcrumbs">
+    <a href="/admin/watermarker"><?php echo $this->translate('Watermark Sets'); ?></a> &gt;
+    <a href="/admin/watermarker/editSet/<?php echo $set['id']; ?>"><?php echo $escape($set['name']); ?></a> &gt;
+    <span><?php echo $this->translate('Add Watermark'); ?></span>
+</div>
 
-<?php echo $this->form()->closeTag(); ?>
+<div class="add-watermark-info">
+    <p class="explanation">
+        <?php echo $this->translate('Choose which image orientation this watermark should be applied to. For a complete watermark set, you should have watermarks for landscape, portrait, and square images.'); ?>
+    </p>
+
+    <?php echo $this->form()->openTag($form, ['id' => 'watermark-form']); ?>
+
+    <div class="field-container">
+        <h3><?php echo $this->translate('Watermark Configuration'); ?></h3>
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('type')); ?>
+                <div class="field-description"><?php echo $this->translate('Select which image orientation this watermark will be applied to.'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('type')); ?>
+            </div>
+        </div>
+
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('media_id')); ?>
+                <div class="field-description"><?php echo $this->translate('Upload or select an image to use as a watermark. PNG files with transparency work best.'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('media_id')); ?>
+            </div>
+        </div>
+
+        <h3><?php echo $this->translate('Placement Settings'); ?></h3>
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('position')); ?>
+                <div class="field-description"><?php echo $this->translate('Choose where the watermark should appear on the image.'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('position')); ?>
+            </div>
+        </div>
+
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('opacity')); ?>
+                <div class="field-description"><?php echo $this->translate('Set the opacity of the watermark (0.1 = barely visible, 1.0 = fully opaque).'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('opacity')); ?>
+            </div>
+        </div>
+    </div>
+
+    <?php
+    // Render hidden fields
+    echo $this->formElement($form->get('o:id'));
+    echo $this->formElement($form->get('set_id'));
+
+    // Render CSRF and other hidden elements
+    foreach ($form as $element) {
+        if (!in_array($element->getName(), ['o:id', 'set_id', 'type', 'media_id', 'position', 'opacity', 'submit'])) {
+            echo $this->formElement($element);
+        }
+    }
+    ?>
+
+    <div class="form-actions">
+        <button type="submit" class="button primary"><?php echo $this->translate('Save watermark'); ?></button>
+    </div>
+
+    <?php echo $this->form()->closeTag(); ?>
+</div>

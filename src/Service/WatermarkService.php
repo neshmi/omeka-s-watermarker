@@ -102,9 +102,12 @@ class WatermarkService
         if (!$this->isWatermarkable($media)) {
             return false;
         }
-
+        
+        // Check if this media is part of an item with a specific watermark assignment
+        $resourceSetId = $this->getWatermarkSetForResource($media);
+        
         // Get the appropriate watermark
-        $watermark = $this->getWatermarkForMedia($media);
+        $watermark = $this->getWatermarkForMedia($media, $resourceSetId);
         if (!$watermark) {
             return false;
         }
@@ -167,6 +170,116 @@ class WatermarkService
         // Apply watermark directly to derivatives
         return $this->applyWatermarkDirectly($media, $watermark);
     }
+    
+    /**
+     * Get the watermark set assigned to a specific media or its parent
+     * 
+     * @param MediaRepresentation $media
+     * @return int|null ID of the watermark set to use, or null for default
+     */
+    protected function getWatermarkSetForResource(MediaRepresentation $media)
+    {
+        // Get the item this media belongs to
+        $item = $media->item();
+        if (!$item) {
+            $this->logger->info(sprintf(
+                'Media ID %s has no parent item, using default watermark set',
+                $media->id()
+            ));
+            return null;
+        }
+        
+        $itemId = $item->id();
+        
+        // Check if there's a direct assignment for this item
+        $sql = "SELECT watermark_set_id FROM watermark_assignment 
+                WHERE resource_id = :item_id AND resource_type = 'item'";
+                
+        $stmt = $this->connection->prepare($sql);
+        $stmt->bindValue('item_id', $itemId);
+        $stmt->execute();
+        
+        $setId = $stmt->fetchColumn();
+        
+        // If we found a direct assignment (even if it's NULL = no watermark)
+        if ($setId !== false) {
+            if ($setId === null) {
+                $this->logger->info(sprintf(
+                    'Item ID %s is explicitly set to have no watermark',
+                    $itemId
+                ));
+                return null;
+            }
+            
+            $this->logger->info(sprintf(
+                'Item ID %s has watermark set ID: %d',
+                $itemId,
+                $setId
+            ));
+            return $setId;
+        }
+        
+        // If no direct assignment, check if the item is part of an item set with an assignment
+        $api = $this->serviceLocator->get('Omeka\ApiManager');
+        
+        try {
+            // Get item sets this item belongs to
+            $itemSets = $item->itemSets();
+            
+            if (empty($itemSets)) {
+                $this->logger->info(sprintf(
+                    'Item ID %s does not belong to any item sets, using default watermark set',
+                    $itemId
+                ));
+                return null;
+            }
+            
+            // Check each item set for a watermark assignment
+            foreach ($itemSets as $itemSet) {
+                $itemSetId = $itemSet->id();
+                
+                $sql = "SELECT watermark_set_id FROM watermark_assignment 
+                        WHERE resource_id = :item_set_id AND resource_type = 'item-set'";
+                        
+                $stmt = $this->connection->prepare($sql);
+                $stmt->bindValue('item_set_id', $itemSetId);
+                $stmt->execute();
+                
+                $setId = $stmt->fetchColumn();
+                
+                if ($setId !== false) {
+                    if ($setId === null) {
+                        $this->logger->info(sprintf(
+                            'Item ID %s is in item set %d which is explicitly set to have no watermark',
+                            $itemId,
+                            $itemSetId
+                        ));
+                        return null;
+                    }
+                    
+                    $this->logger->info(sprintf(
+                        'Item ID %s is in item set %d with watermark set ID: %d',
+                        $itemId,
+                        $itemSetId,
+                        $setId
+                    ));
+                    return $setId;
+                }
+            }
+        } catch (\Exception $e) {
+            $this->logger->err(sprintf(
+                'Error checking item sets for item ID %s: %s',
+                $itemId,
+                $e->getMessage()
+            ));
+        }
+        
+        $this->logger->info(sprintf(
+            'No watermark set assigned to item ID %s or its item sets, using default',
+            $itemId
+        ));
+        return null;
+    }
 
     /**
      * Check if media is eligible for watermarking
@@ -210,9 +323,10 @@ class WatermarkService
      * Get appropriate watermark for media
      *
      * @param MediaRepresentation $media
+     * @param int|null $resourceSetId Optional watermark set ID assigned to this resource or its parent
      * @return array|null Watermark configuration or null if none applies
      */
-    public function getWatermarkForMedia(MediaRepresentation $media)
+    public function getWatermarkForMedia(MediaRepresentation $media, $resourceSetId = null)
     {
         // Get image dimensions
         $orientation = $this->getMediaOrientation($media);
@@ -220,65 +334,181 @@ class WatermarkService
             $this->logger->info('Could not determine media orientation, skipping watermark');
             return null;
         }
-
-        // Get settings for this orientation from the database
-        $sql = "SELECT * FROM watermark_setting WHERE (orientation = :orientation OR orientation = 'all') AND enabled = 1";
+        
+        // If this is a square image but no 'square' type exists, default to the orientation
+        // being either landscape (width >= height) or portrait (width < height)
+        $imageType = $orientation;
+        if ($orientation === 'square') {
+            $imageInfo = $this->getImageInfo($media);
+            if ($imageInfo) {
+                $squareTypeExists = $this->checkIfWatermarkTypeExists('square');
+                if (!$squareTypeExists) {
+                    $imageType = ($imageInfo['width'] >= $imageInfo['height']) ? 'landscape' : 'portrait';
+                    $this->logger->info(sprintf(
+                        'Square image but no square watermark type exists, treating as %s',
+                        $imageType
+                    ));
+                }
+            }
+        }
+        
+        // Check if there's a specific watermark set assigned to this item or its parent item set
+        if ($resourceSetId) {
+            $this->logger->info(sprintf('Checking for resource-specific watermark set ID: %d', $resourceSetId));
+            $watermark = $this->getWatermarkFromSet($resourceSetId, $imageType);
+            if ($watermark) {
+                return $watermark;
+            }
+            // If no matching watermark in resource-specific set, fall back to default set
+        }
+        
+        // If no resource-specific watermark, use the default set
+        $this->logger->info('Falling back to default watermark set');
+        return $this->getDefaultWatermark($imageType);
+    }
+    
+    /**
+     * Get image info including dimensions for a media item
+     * 
+     * @param MediaRepresentation $media
+     * @return array|null Array with width, height, or null if dimensions can't be determined
+     */
+    protected function getImageInfo(MediaRepresentation $media)
+    {
+        // Get the file path
+        $filePath = $this->getLocalFilePath($media);
+        if (!$filePath) {
+            return null;
+        }
+        
+        // Get image dimensions
+        $imageSize = @getimagesize($filePath);
+        if (!$imageSize) {
+            return null;
+        }
+        
+        return [
+            'width' => $imageSize[0],
+            'height' => $imageSize[1],
+            'type' => image_type_to_mime_type($imageSize[2])
+        ];
+    }
+    
+    /**
+     * Check if a specific watermark type exists in the database
+     * 
+     * @param string $type The watermark type to check for (landscape, portrait, square, all)
+     * @return bool True if this type exists in any set, false otherwise
+     */
+    protected function checkIfWatermarkTypeExists($type)
+    {
+        $sql = "SELECT COUNT(*) FROM watermark_setting WHERE type = :type";
         $stmt = $this->connection->prepare($sql);
-        $stmt->bindValue('orientation', $orientation);
+        $stmt->bindValue('type', $type);
         $stmt->execute();
-
-        $watermarks = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-        if (empty($watermarks)) {
+        
+        return (int)$stmt->fetchColumn() > 0;
+    }
+    
+    /**
+     * Get watermark from a specific set for a given image type
+     * 
+     * @param int $setId The watermark set ID
+     * @param string $imageType The image type (landscape, portrait, square, all)
+     * @return array|null Watermark configuration or null if none applies
+     */
+    protected function getWatermarkFromSet($setId, $imageType)
+    {
+        // Check if set exists and is enabled
+        $sql = "SELECT * FROM watermark_set WHERE id = :id AND enabled = 1";
+        $stmt = $this->connection->prepare($sql);
+        $stmt->bindValue('id', $setId);
+        $stmt->execute();
+        
+        $set = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$set) {
+            $this->logger->info(sprintf('Watermark set ID %d does not exist or is disabled', $setId));
+            return null;
+        }
+        
+        // Try to get the specific watermark for this image type
+        $sql = "SELECT w.* FROM watermark_setting w
+                WHERE w.set_id = :set_id AND (w.type = :type OR w.type = 'all')
+                ORDER BY CASE WHEN w.type = :type THEN 0 ELSE 1 END
+                LIMIT 1";
+                
+        $stmt = $this->connection->prepare($sql);
+        $stmt->bindValue('set_id', $setId);
+        $stmt->bindValue('type', $imageType);
+        $stmt->execute();
+        
+        $watermark = $stmt->fetch(\PDO::FETCH_ASSOC);
+        if (!$watermark) {
             $this->logger->info(sprintf(
-                'No watermark configuration found for orientation: %s',
-                $orientation
+                'No watermark found in set %d for image type: %s',
+                $setId,
+                $imageType
             ));
             return null;
         }
+        
+        // Verify the asset exists
+        try {
+            $assetId = $watermark['media_id'];
+            $api = $this->serviceLocator->get('Omeka\ApiManager');
+            $watermarkAsset = $api->read('assets', $assetId)->getContent();
 
-        // Try each watermark until we find one with valid media
-        foreach ($watermarks as $watermark) {
             $this->logger->info(sprintf(
-                'Checking watermark configuration ID %s for orientation %s',
-                $watermark['id'],
-                $orientation
+                'Found watermark configuration with asset ID %s for image type %s in set %d',
+                $assetId,
+                $imageType,
+                $setId
             ));
-
-            // Get the asset instead of media
-            try {
-                $assetId = $watermark['media_id']; // We kept the column name as media_id
-                $api = $this->serviceLocator->get('Omeka\ApiManager');
-                $watermarkAsset = $api->read('assets', $assetId)->getContent();
-
-                $this->logger->info(sprintf(
-                    'Found asset ID %s for watermark',
-                    $assetId
-                ));
-
-                // If we got here, the asset exists
-                return $watermark;
-
-            } catch (\Exception $e) {
-                $this->logger->err(sprintf(
-                    'Could not load watermark asset %s: %s',
-                    $watermark['media_id'],
-                    $e->getMessage()
-                ));
-
-                // Log the error and continue to the next watermark
-                continue;
+            
+            return $watermark;
+        } catch (\Exception $e) {
+            $this->logger->err(sprintf(
+                'Could not load watermark asset %s: %s',
+                $watermark['media_id'],
+                $e->getMessage()
+            ));
+            return null;
+        }
+    }
+    
+    /**
+     * Get the default watermark for a given image type
+     * 
+     * @param string $imageType The image type (landscape, portrait, square, all)
+     * @return array|null Watermark configuration or null if none applies
+     */
+    protected function getDefaultWatermark($imageType)
+    {
+        // Find the default watermark set
+        $sql = "SELECT id FROM watermark_set WHERE is_default = 1 AND enabled = 1 LIMIT 1";
+        $defaultSetId = $this->connection->fetchColumn($sql);
+        
+        if (!$defaultSetId) {
+            $this->logger->info('No default watermark set found, looking for any enabled set');
+            // If no default set, try any enabled set
+            $sql = "SELECT id FROM watermark_set WHERE enabled = 1 LIMIT 1";
+            $defaultSetId = $this->connection->fetchColumn($sql);
+            
+            if (!$defaultSetId) {
+                $this->logger->info('No enabled watermark sets found');
+                return null;
             }
         }
-
-        $this->logger->info('No valid watermark configurations found');
-        return null;
+        
+        $this->logger->info(sprintf('Using default watermark set ID: %d', $defaultSetId));
+        return $this->getWatermarkFromSet($defaultSetId, $imageType);
     }
 
     /**
      * Get media orientation
      *
      * @param MediaRepresentation $media
-     * @return string|null 'landscape', 'portrait', or null on error
+     * @return string|null 'landscape', 'portrait', 'square', or null on error
      */
     protected function getMediaOrientation(MediaRepresentation $media)
     {
@@ -323,13 +553,23 @@ class WatermarkService
         $width = $imageSize[0];
         $height = $imageSize[1];
 
-        $orientation = ($width >= $height) ? 'landscape' : 'portrait';
+        // Consider an image 'square' if width and height are within 5% of each other
+        $tolerance = 0.05; // 5% tolerance
+        $aspectRatio = $width / $height;
+        
+        if (abs($aspectRatio - 1) <= $tolerance) {
+            $orientation = 'square';
+        } else {
+            $orientation = ($width >= $height) ? 'landscape' : 'portrait';
+        }
+        
         $this->logger->info(sprintf(
-            'Media ID %s orientation: %s (%dx%d)',
+            'Media ID %s orientation: %s (%dx%d, ratio: %.2f)',
             $media->id(),
             $orientation,
             $width,
-            $height
+            $height,
+            $aspectRatio
         ));
 
         return $orientation;

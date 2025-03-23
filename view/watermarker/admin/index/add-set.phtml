@@ -1,0 +1,24 @@
+<?php
+/**
+ * @var \Laminas\Form\Form $form
+ */
+$this->htmlElement('body')->appendAttribute('class', 'watermarker add-set');
+$this->headLink()->prependStylesheet($this->assetUrl('css/watermarker.css', 'Watermarker'));
+$this->headScript()->appendFile($this->assetUrl('js/watermarker.js', 'Watermarker'));
+$form->prepare();
+?>
+
+<?php echo $this->pageTitle($this->translate('Add Watermark Set'), 1, $this->translate('Watermarker')); ?>
+
+<div id="page-actions">
+    <?php echo $this->hyperlink($this->translate('Cancel'), $this->url('admin/watermarker'), ['class' => 'button']); ?>
+</div>
+
+<?php echo $this->form()->openTag($form); ?>
+<div id="page-content">
+    <?php echo $this->formCollection($form); ?>
+</div>
+<div class="page-actions">
+    <?php echo $this->formSubmit($form->get('submit')); ?>
+</div>
+<?php echo $this->form()->closeTag(); ?>

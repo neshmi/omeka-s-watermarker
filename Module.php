@@ -64,19 +64,47 @@ class Module extends AbstractModule
     {
         $connection = $serviceLocator->get('Omeka\Connection');
 
+        // Create watermark set table
+        $connection->exec("
+            CREATE TABLE watermark_set (
+                id INT AUTO_INCREMENT NOT NULL,
+                name VARCHAR(255) NOT NULL,
+                is_default TINYINT(1) NOT NULL DEFAULT 0,
+                enabled TINYINT(1) NOT NULL DEFAULT 1,
+                created DATETIME NOT NULL,
+                modified DATETIME DEFAULT NULL,
+                PRIMARY KEY (id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        ");
+
         // Create watermark table
         $connection->exec("
             CREATE TABLE watermark_setting (
                 id INT AUTO_INCREMENT NOT NULL,
-                name VARCHAR(255) NOT NULL,
+                set_id INT NOT NULL,
+                type VARCHAR(50) NOT NULL, /* landscape, portrait, square, all */
                 media_id INT NOT NULL,
-                orientation VARCHAR(50) NOT NULL,
                 position VARCHAR(50) NOT NULL,
                 opacity DECIMAL(3,2) NOT NULL,
-                enabled TINYINT(1) NOT NULL,
                 created DATETIME NOT NULL,
                 modified DATETIME DEFAULT NULL,
-                PRIMARY KEY (id)
+                PRIMARY KEY (id),
+                CONSTRAINT fk_watermark_set FOREIGN KEY (set_id) REFERENCES watermark_set(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+        ");
+
+        // Create table for item/item set watermark assignments
+        $connection->exec("
+            CREATE TABLE watermark_assignment (
+                id INT AUTO_INCREMENT NOT NULL,
+                resource_id INT NOT NULL,
+                resource_type VARCHAR(50) NOT NULL, /* item, item-set */
+                watermark_set_id INT NULL, /* NULL means no watermark */
+                created DATETIME NOT NULL,
+                modified DATETIME DEFAULT NULL,
+                PRIMARY KEY (id),
+                UNIQUE KEY (resource_id, resource_type),
+                CONSTRAINT fk_watermark_assignment FOREIGN KEY (watermark_set_id) REFERENCES watermark_set(id) ON DELETE SET NULL
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         ");
     }
@@ -89,7 +117,188 @@ class Module extends AbstractModule
     public function uninstall(ServiceLocatorInterface $serviceLocator)
     {
         $connection = $serviceLocator->get('Omeka\Connection');
+
+        // Drop in reverse order due to foreign key constraints
+        $connection->exec('DROP TABLE IF EXISTS watermark_assignment');
         $connection->exec('DROP TABLE IF EXISTS watermark_setting');
+        $connection->exec('DROP TABLE IF EXISTS watermark_set');
+        $connection->exec('DROP TABLE IF EXISTS watermark_setting_old');
+    }
+
+    /**
+     * Upgrade this module.
+     *
+     * @param string $oldVersion
+     * @param string $newVersion
+     * @param ServiceLocatorInterface $serviceLocator
+     */
+    public function upgrade($oldVersion, $newVersion, ServiceLocatorInterface $serviceLocator)
+    {
+        $connection = $serviceLocator->get('Omeka\Connection');
+        $logger = $serviceLocator->get('Omeka\Logger');
+
+        if (version_compare($oldVersion, '1.1.0', '<')) {
+            // Perform migration directly in the upgrade method
+            try {
+                $logger->info('Watermarker upgrade: Starting migration to multiple watermarks');
+
+                // Start a transaction
+                try {
+                    $connection->beginTransaction();
+                } catch (\Exception $transactionException) {
+                    $logger->err(sprintf('Watermarker upgrade: Error starting transaction: %s', $transactionException->getMessage()));
+                    // Continue without transaction if it fails
+                }
+
+                // Check if the old watermark_setting table exists and has the old structure
+                $oldTableExists = false;
+                try {
+                    // Check if the watermark_setting table exists
+                    $sql = "SHOW TABLES LIKE 'watermark_setting'";
+                    $stmt = $connection->query($sql);
+                    $tableExists = (bool) $stmt->fetchColumn();
+
+                    if ($tableExists) {
+                        // Check if it has the old structure (has 'orientation' column)
+                        $sql = "SHOW COLUMNS FROM watermark_setting LIKE 'orientation'";
+                        $stmt = $connection->query($sql);
+                        $oldTableExists = (bool) $stmt->fetchColumn();
+                    }
+                } catch (\Exception $e) {
+                    $oldTableExists = false;
+                }
+
+                if (!$oldTableExists) {
+                    // Only roll back if there's an active transaction
+                    if ($connection->isTransactionActive()) {
+                        $connection->rollBack();
+                    }
+                    $logger->info('Watermarker upgrade: No migration needed.');
+                    return;
+                }
+
+                // Create new tables
+                $logger->info('Watermarker upgrade: Creating new watermark tables');
+
+                // Rename the old table
+                $connection->exec("RENAME TABLE watermark_setting TO watermark_setting_old");
+
+                // Create watermark set table
+                $connection->exec("
+                    CREATE TABLE watermark_set (
+                        id INT AUTO_INCREMENT NOT NULL,
+                        name VARCHAR(255) NOT NULL,
+                        is_default TINYINT(1) NOT NULL DEFAULT 0,
+                        enabled TINYINT(1) NOT NULL DEFAULT 1,
+                        created DATETIME NOT NULL,
+                        modified DATETIME DEFAULT NULL,
+                        PRIMARY KEY (id)
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+
+                // Create watermark table
+                $connection->exec("
+                    CREATE TABLE watermark_setting (
+                        id INT AUTO_INCREMENT NOT NULL,
+                        set_id INT NOT NULL,
+                        type VARCHAR(50) NOT NULL,
+                        media_id INT NOT NULL,
+                        position VARCHAR(50) NOT NULL,
+                        opacity DECIMAL(3,2) NOT NULL,
+                        created DATETIME NOT NULL,
+                        modified DATETIME DEFAULT NULL,
+                        PRIMARY KEY (id),
+                        CONSTRAINT fk_watermark_set FOREIGN KEY (set_id) REFERENCES watermark_set(id) ON DELETE CASCADE
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+
+                // Create assignment table
+                $connection->exec("
+                    CREATE TABLE watermark_assignment (
+                        id INT AUTO_INCREMENT NOT NULL,
+                        resource_id INT NOT NULL,
+                        resource_type VARCHAR(50) NOT NULL,
+                        watermark_set_id INT NULL,
+                        created DATETIME NOT NULL,
+                        modified DATETIME DEFAULT NULL,
+                        PRIMARY KEY (id),
+                        UNIQUE KEY (resource_id, resource_type),
+                        CONSTRAINT fk_watermark_assignment FOREIGN KEY (watermark_set_id) REFERENCES watermark_set(id) ON DELETE SET NULL
+                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ");
+
+                // Migrate existing data
+                // Get old watermarks
+                $sql = "SELECT * FROM watermark_setting_old ORDER BY id ASC";
+                $stmt = $connection->query($sql);
+                $oldWatermarks = $stmt->fetchAll();
+
+                $count = 0;
+                if (!empty($oldWatermarks)) {
+                    // Create a default watermark set
+                    $now = date('Y-m-d H:i:s');
+                    $sql = "INSERT INTO watermark_set (name, is_default, enabled, created)
+                            VALUES ('Default Watermark Set', 1, 1, :created)";
+                    $stmt = $connection->prepare($sql);
+                    $stmt->bindValue('created', $now);
+                    $stmt->execute();
+
+                    $setId = $connection->lastInsertId();
+
+                    // Migrate watermarks
+                    foreach ($oldWatermarks as $oldWatermark) {
+                        // Only migrate enabled watermarks
+                        if (!isset($oldWatermark['enabled']) || !$oldWatermark['enabled']) {
+                            continue;
+                        }
+
+                        // Map old orientation to new type
+                        $type = isset($oldWatermark['orientation']) && $oldWatermark['orientation'] === 'all'
+                              ? 'all'
+                              : (isset($oldWatermark['orientation']) ? $oldWatermark['orientation'] : 'all');
+
+                        // Insert into new table
+                        $sql = "INSERT INTO watermark_setting (set_id, type, media_id, position, opacity, created, modified)
+                                VALUES (:set_id, :type, :media_id, :position, :opacity, :created, :modified)";
+                        $stmt = $connection->prepare($sql);
+                        $stmt->bindValue('set_id', $setId);
+                        $stmt->bindValue('type', $type);
+                        $stmt->bindValue('media_id', $oldWatermark['media_id']);
+                        $stmt->bindValue('position', $oldWatermark['position']);
+                        $stmt->bindValue('opacity', $oldWatermark['opacity']);
+                        $stmt->bindValue('created', isset($oldWatermark['created']) ? $oldWatermark['created'] : $now);
+                        $stmt->bindValue('modified', isset($oldWatermark['modified']) ? $oldWatermark['modified'] : null);
+                        $stmt->execute();
+
+                        $count++;
+                    }
+                }
+
+                // Commit the transaction
+                if ($connection->isTransactionActive()) {
+                    try {
+                        $connection->commit();
+                    } catch (\Exception $commitException) {
+                        $logger->err(sprintf('Watermarker upgrade: Error committing transaction: %s', $commitException->getMessage()));
+                    }
+                }
+                $logger->info(sprintf('Watermarker upgrade: Migrated %d existing watermark(s).', $count));
+                $logger->info('Watermarker upgrade: Migration completed successfully.');
+
+            } catch (\Exception $e) {
+                // Rollback on error
+                if ($connection->isTransactionActive()) {
+                    try {
+                        $connection->rollBack();
+                    } catch (\Exception $rollbackException) {
+                        $logger->err(sprintf('Watermarker upgrade: Rollback error: %s', $rollbackException->getMessage()));
+                    }
+                }
+
+                $logger->err(sprintf('Watermarker upgrade: Migration failed: %s', $e->getMessage()));
+                $logger->err($e->getTraceAsString());
+            }
+        }
     }
 
     /**
@@ -100,6 +309,7 @@ class Module extends AbstractModule
     public function attachListeners(SharedEventManagerInterface $sharedEventManager)
     {
         $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: Attaching event listeners');
 
         // Listen for media creation and update events to apply watermarks
         $sharedEventManager->attach(
@@ -156,6 +366,19 @@ class Module extends AbstractModule
             [$this, 'addAdminNavigation']
         );
 
+        // Add watermark tab to item and item set admin pages (edit only)
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\Item',
+            'view.edit.form.before',
+            [$this, 'addItemWatermarkTabEdit']
+        );
+
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\ItemSet',
+            'view.edit.form.before',
+            [$this, 'addItemSetWatermarkTabEdit']
+        );
+
         // Enable this for debugging only - it generates too much noise in logs
         /*
         $sharedEventManager->attach(
@@ -188,8 +411,196 @@ class Module extends AbstractModule
     public function addAdminNavigation(Event $event)
     {
         $view = $event->getTarget();
-        $view->headLink()->appendStylesheet($view->assetUrl('css/watermark.css', 'Watermarker'));
-        $view->headScript()->appendFile($view->assetUrl('js/watermark.js', 'Watermarker'));
+        $view->headLink()->appendStylesheet($view->assetUrl('css/watermarker.css', 'Watermarker'));
+
+        // Make sure jQuery is loaded before our script, use an absolute URL
+        $view->headScript()->appendFile('//code.jquery.com/jquery-3.6.0.min.js', 'text/javascript', ['conditional' => 'lt IE 9']);
+
+        // Force append our script with explicit timestamp to prevent caching
+        $moduleJsPath = $view->assetUrl('js/watermarker.js', 'Watermarker');
+        $view->headScript()->appendFile($moduleJsPath . '?t=' . time());
+
+        // Output an HTML comment to confirm script inclusion
+        echo '<!-- Watermarker: JavaScript included at ' . date('H:i:s') . ' -->';
+
+        // Add watermark link to navigation
+        $navigation = $view->navigation();
+        $navigation->addPage([
+            'label' => 'Watermarks',
+            'uri' => '/admin/watermarker',
+            'resource' => 'Watermarker\Controller\Admin\Watermarker',
+            'privilege' => 'browse',
+            'class' => 'o-icon-fa-image'
+        ]);
+
+        // Log that script initialization is complete
+        $this->getServiceLocator()->get('Omeka\Logger')->info('Watermarker: Admin navigation scripts initialized');
+    }
+
+    /**
+     * Add watermark tab to item edit page
+     *
+     * @param Event $event
+     */
+    public function addItemWatermarkTabEdit(Event $event)
+    {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: addItemWatermarkTabEdit triggered on ' . $event->getName());
+
+        $view = $event->getTarget();
+        $item = $view->item;
+
+        if (!$item) {
+            $logger->err('Watermarker: No item found in view');
+            // Even when no item is found, we'll still inject an empty data div for debugging
+            echo "<!-- Watermarker: No item found! -->\n";
+            echo '<div id="watermarker-data" data-watermarker=\'{"error":"No item found"}\' style="display:none;"></div>';
+            return;
+        }
+
+        $services = $this->getServiceLocator();
+        $connection = $services->get('Omeka\Connection');
+
+        // Check if this item has a watermark assignment
+        $sql = "SELECT * FROM watermark_assignment
+                WHERE resource_id = :resource_id AND resource_type = 'item'";
+        $stmt = $connection->prepare($sql);
+        $stmt->bindValue('resource_id', $item->id());
+        $stmt->execute();
+        $assignment = $stmt->fetch();
+
+        // Create direct URL to bypass router issues
+        $assignUrl = '/admin/watermarker/assign/item/' . $item->id();
+
+        // Get watermark set info if assigned
+        $watermarkInfo = null;
+        if ($assignment && $assignment['watermark_set_id']) {
+            $sql = "SELECT name FROM watermark_set WHERE id = :id";
+            $stmt = $connection->prepare($sql);
+            $stmt->bindValue('id', $assignment['watermark_set_id']);
+            $stmt->execute();
+            $setInfo = $stmt->fetch();
+
+            if ($setInfo) {
+                $watermarkInfo = sprintf('Using watermark set: "%s"', $setInfo['name']);
+            }
+        } else if ($assignment && $assignment['watermark_set_id'] === null) {
+            $watermarkInfo = 'Watermarking disabled for this item';
+        } else {
+            $watermarkInfo = 'Using default watermark settings';
+        }
+
+        // Store assignment information in a data attribute for JavaScript to use
+        $watermarker_data = json_encode([
+            'resourceId' => $item->id(),
+            'resourceType' => 'item',
+            'watermarkInfo' => $watermarkInfo,
+            'assignUrl' => $assignUrl
+        ]);
+
+        // For template purposes, create the HTML structure that will be used by JS
+        $itemHtml = '<div class="field">
+                    <div class="field-meta">
+                        <label>Watermark Settings</label>
+                    </div>
+                    <div class="inputs">
+                        <div class="value">
+                            <p class="watermark-status"></p>
+                            <a href="" class="button watermark-edit-link" target="_blank">Edit Watermark Settings</a>
+                        </div>
+                    </div>
+                </div>';
+
+        // Inject the data div with debugging information and template
+        echo "<!-- Watermarker: Injecting data for item ID " . $item->id() . " -->\n";
+        echo '<div id="watermarker-data" data-watermarker=\'' . $watermarker_data . '\' style="display:none;">Watermarker data present</div>';
+        // Also inject the template data for JavaScript to use
+        echo '<div id="watermarker-template" style="display:none;">' . $itemHtml . '</div>';
+
+        echo "<!-- Watermarker: Data injection complete -->\n";
+    }
+
+    /**
+     * Add watermark tab to item set edit page
+     *
+     * @param Event $event
+     */
+    public function addItemSetWatermarkTabEdit(Event $event)
+    {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker: addItemSetWatermarkTabEdit triggered on ' . $event->getName());
+
+        $view = $event->getTarget();
+        $itemSet = $view->itemSet;
+
+        if (!$itemSet) {
+            $logger->err('Watermarker: No item set found in view');
+            // Even when no item set is found, we'll still inject an empty data div for debugging
+            echo "<!-- Watermarker: No item set found! -->\n";
+            echo '<div id="watermarker-data" data-watermarker=\'{"error":"No item set found"}\' style="display:none;"></div>';
+            return;
+        }
+
+        $services = $this->getServiceLocator();
+        $connection = $services->get('Omeka\Connection');
+
+        // Check if this item set has a watermark assignment
+        $sql = "SELECT * FROM watermark_assignment
+                WHERE resource_id = :resource_id AND resource_type = 'item-set'";
+        $stmt = $connection->prepare($sql);
+        $stmt->bindValue('resource_id', $itemSet->id());
+        $stmt->execute();
+        $assignment = $stmt->fetch();
+
+        // Create direct URL to bypass router issues
+        $assignUrl = '/admin/watermarker/assign/item-set/' . $itemSet->id();
+
+        // Get watermark set info if assigned
+        $watermarkInfo = null;
+        if ($assignment && $assignment['watermark_set_id']) {
+            $sql = "SELECT name FROM watermark_set WHERE id = :id";
+            $stmt = $connection->prepare($sql);
+            $stmt->bindValue('id', $assignment['watermark_set_id']);
+            $stmt->execute();
+            $setInfo = $stmt->fetch();
+
+            if ($setInfo) {
+                $watermarkInfo = sprintf('Using watermark set: "%s"', $setInfo['name']);
+            }
+        } else if ($assignment && $assignment['watermark_set_id'] === null) {
+            $watermarkInfo = 'Watermarking disabled for this item set and its items';
+        } else {
+            $watermarkInfo = 'Using default watermark settings';
+        }
+
+        // Store assignment information in a data attribute for JavaScript to use
+        $watermarker_data = json_encode([
+            'resourceId' => $itemSet->id(),
+            'resourceType' => 'item-set',
+            'watermarkInfo' => $watermarkInfo,
+            'assignUrl' => $assignUrl
+        ]);
+
+        // For template purposes, create the HTML structure that will be used by JS
+        $itemHtml = '<div class="field">
+                    <div class="field-meta">
+                        <label>Watermark Settings</label>
+                    </div>
+                    <div class="inputs">
+                        <div class="value">
+                            <p class="watermark-status"></p>
+                            <a href="" class="button watermark-edit-link" target="_blank">Edit Watermark Settings</a>
+                        </div>
+                    </div>
+                </div>';
+
+        // Inject the data div with debugging information and template
+        echo "<!-- Watermarker: Injecting data for item set ID " . $itemSet->id() . " -->\n";
+        echo '<div id="watermarker-data" data-watermarker=\'' . $watermarker_data . '\' style="display:none;">Watermarker data present</div>';
+        // Also inject the template data for JavaScript to use
+        echo '<div id="watermarker-template" style="display:none;">' . $itemHtml . '</div>';
+
+        echo "<!-- Watermarker: Data injection complete -->\n";
     }
 
     /**
@@ -456,7 +867,7 @@ class Module extends AbstractModule
                 // Create a temp file for the result with proper extension
                 $tempDir = sys_get_temp_dir();
                 $tempResult = tempnam($tempDir, 'watermarked_');
-                
+
                 // Get file extension from derivative type
                 $fileExt = $watermarkService->getExtensionForMimeType($derivativeType);
                 if (!empty($fileExt)) {
@@ -486,7 +897,7 @@ class Module extends AbstractModule
                         $tempResult,
                         file_exists($tempResult) ? filesize($tempResult) : 0
                     ));
-                    
+
                     // Check for any PHP error messages
                     $lastError = error_get_last();
                     if ($lastError) {
@@ -497,7 +908,7 @@ class Module extends AbstractModule
                             $lastError['line']
                         ));
                     }
-                    
+
                     @unlink($tempResult);
                     return;
                 }
@@ -809,7 +1220,7 @@ class Module extends AbstractModule
             // Create a temp file for the result with proper extension
             $tempDir = sys_get_temp_dir();
             $tempResult = tempnam($tempDir, 'watermarked_');
-            
+
             // Get file extension from derivative type
             $fileExt = $watermarkService->getExtensionForMimeType($derivativeType);
             if (!empty($fileExt)) {

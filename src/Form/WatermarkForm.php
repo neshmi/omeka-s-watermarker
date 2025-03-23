@@ -1,6 +1,6 @@
 <?php
 /**
- * Watermarker configuration form
+ * Watermarker watermark form
  */
 
 namespace Watermarker\Form;
@@ -22,14 +22,25 @@ class WatermarkForm extends Form
         ]);
 
         $this->add([
-            'name' => 'name',
-            'type' => Element\Text::class,
+            'name' => 'set_id',
+            'type' => Element\Hidden::class,
+        ]);
+
+        $this->add([
+            'name' => 'type',
+            'type' => Element\Select::class,
             'options' => [
-                'label' => 'Watermark Name',
-                'info' => 'Name for this watermark configuration.',
+                'label' => 'Watermark Type',
+                'info' => 'Select which image type this watermark should be applied to.',
+                'value_options' => [
+                    'all' => 'All images',
+                    'landscape' => 'Landscape images only',
+                    'portrait' => 'Portrait images only',
+                    'square' => 'Square images only',
+                ],
             ],
             'attributes' => [
-                'id' => 'watermark-name',
+                'id' => 'watermark-type',
                 'required' => true,
             ],
         ]);
@@ -46,24 +57,6 @@ class WatermarkForm extends Form
                 'id' => 'watermark-media',
                 'required' => true,
                 'class' => 'chosen-select',
-            ],
-        ]);
-
-        $this->add([
-            'name' => 'orientation',
-            'type' => Element\Select::class,
-            'options' => [
-                'label' => 'Apply To',
-                'info' => 'Select which image orientations this watermark should be applied to.',
-                'value_options' => [
-                    'all' => 'All images',
-                    'landscape' => 'Landscape images only',
-                    'portrait' => 'Portrait images only',
-                ],
-            ],
-            'attributes' => [
-                'id' => 'watermark-orientation',
-                'required' => true,
             ],
         ]);
 
@@ -105,45 +98,16 @@ class WatermarkForm extends Form
             ],
         ]);
 
-        $this->add([
-            'name' => 'enabled',
-            'type' => Element\Checkbox::class,
-            'options' => [
-                'label' => 'Enabled',
-                'info' => 'Check to enable this watermark configuration.',
-            ],
-            'attributes' => [
-                'id' => 'watermark-enabled',
-            ],
-        ]);
-
         // Input filter for validation
         $inputFilter = $this->getInputFilter();
 
         $inputFilter->add([
-            'name' => 'name',
+            'name' => 'type',
             'required' => true,
-            'filters' => [
-                ['name' => 'StringTrim'],
-            ],
-            'validators' => [
-                [
-                    'name' => 'StringLength',
-                    'options' => [
-                        'min' => 1,
-                        'max' => 255,
-                    ],
-                ],
-            ],
         ]);
 
         $inputFilter->add([
             'name' => 'media_id',
-            'required' => true,
-        ]);
-
-        $inputFilter->add([
-            'name' => 'orientation',
             'required' => true,
         ]);
 
@@ -166,10 +130,15 @@ class WatermarkForm extends Form
                 ],
             ],
         ]);
-
-        $inputFilter->add([
-            'name' => 'enabled',
-            'required' => false,
+        
+        // Add submit button
+        $this->add([
+            'name' => 'submit',
+            'type' => 'submit',
+            'attributes' => [
+                'value' => 'Save',
+                'class' => 'button',
+            ],
         ]);
     }
 }

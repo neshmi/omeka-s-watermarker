@@ -1,0 +1,45 @@
+<?php
+/**
+ * @var \Omeka\Api\Representation\AbstractResourceRepresentation $resource
+ * @var string $resourceType
+ * @var \Laminas\Form\Form $form
+ * @var array|null $assignment
+ */
+
+$this->htmlElement('body')->appendAttribute('class', 'watermarker assign');
+$resourceLabel = $resourceType === 'item-set' ? 'Item Set' : 'Item';
+$resourceName = $resource->displayTitle();
+$formAttr = $form->getAttribute('id') ? $form->getAttribute('id') : 'watermark-assignment-form';
+$form->setAttribute('id', $formAttr);
+?>
+
+<?php echo $this->pageTitle(sprintf('Watermark Assignment: %s', $resourceName)); ?>
+
+<div id="page-actions">
+    <a href="<?php echo $resource->url(); ?>" class="button">
+        <?php echo $this->translate('Back'); ?>
+    </a>
+</div>
+
+<div class="breadcrumbs">
+    <a href="/admin/watermarker">Watermarks</a> &gt;
+    <span>Assign Watermark</span>
+</div>
+
+<p class="explanation">
+    Select which watermark set to use for this <?php echo $resourceLabel; ?>.
+    This will apply to all media in <?php echo $resourceType === 'item-set' ? 'this item set and its items' : 'this item'; ?>.
+    Select "No watermark" to disable watermarking completely.
+    Select "Use default" to use the default watermark set.
+</p>
+
+<?php 
+echo $this->form()->openTag($form);
+echo $this->formCollection($form, false);
+?>
+
+<div class="form-actions">
+    <button type="submit" name="submit" class="button">Save</button>
+</div>
+
+<?php echo $this->form()->closeTag(); ?>

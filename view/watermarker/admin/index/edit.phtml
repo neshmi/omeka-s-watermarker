@@ -9,16 +9,132 @@ $this->headLink()->prependStylesheet($this->assetUrl('css/watermarker.css', 'Wat
 $this->headScript()->appendFile($this->assetUrl('js/watermarker.js', 'Watermarker'));
 $form->prepare();
 $escape = $this->plugin('escapeHtml');
+
+// Try to get the set info
+$setId = $watermark['set_id'];
+$setName = isset($watermark['set_name']) ? $watermark['set_name'] : 'Unknown Set';
+
+// Translate orientation type to more readable format
+$typeLabels = [
+    'landscape' => $this->translate('Landscape Images'),
+    'portrait' => $this->translate('Portrait Images'),
+    'square' => $this->translate('Square Images'),
+    'all' => $this->translate('All Images')
+];
+$typeLabel = isset($typeLabels[$watermark['type']]) ? $typeLabels[$watermark['type']] : $watermark['type'];
 ?>
 
-<?php echo $this->pageTitle(sprintf($this->translate('Edit Watermark: "%s"'), $escape($watermark['name'])), 1, $this->translate('Media Watermarking')); ?>
-
-<?php echo $this->form()->openTag($form); ?>
+<?php echo $this->pageTitle(sprintf($this->translate('Edit Watermark for %s'), $escape($typeLabel)), 1, $this->translate('Watermarker')); ?>
 
 <div id="page-actions">
-    <button type="submit"><?php echo $this->translate('Save'); ?></button>
+    <?php echo $this->hyperlink($this->translate('Cancel'), '/admin/watermarker/editSet/' . $setId, ['class' => 'button']); ?>
+    <button type="submit" form="watermark-form" class="button primary"><?php echo $this->translate('Save changes'); ?></button>
 </div>
 
-<?php echo $this->formCollection($form, false); ?>
+<div class="breadcrumbs">
+    <a href="/admin/watermarker"><?php echo $this->translate('Watermark Sets'); ?></a> &gt;
+    <a href="/admin/watermarker/editSet/<?php echo $setId; ?>"><?php echo $escape($setName); ?></a> &gt;
+    <span><?php echo sprintf($this->translate('Edit %s Watermark'), $escape($typeLabel)); ?></span>
+</div>
 
-<?php echo $this->form()->closeTag(); ?>
+<div class="edit-watermark-info">
+    <?php
+    // Try to get the asset preview
+    $assetPreview = '';
+    try {
+        if (isset($watermark['media_id'])) {
+            $asset = $this->api()->read('assets', $watermark['media_id'])->getContent();
+            if ($asset) {
+                $assetPreview = sprintf(
+                    '<div class="watermark-current-preview"><img src="%s" alt="%s"></div>',
+                    $escape($asset->assetUrl()),
+                    $escape($typeLabel)
+                );
+            }
+        }
+    } catch (\Exception $e) {
+        // No preview available
+    }
+    ?>
+
+    <?php if (!empty($assetPreview)): ?>
+    <div class="current-watermark">
+        <h3><?php echo $this->translate('Current Watermark Image'); ?></h3>
+        <?php echo $assetPreview; ?>
+    </div>
+    <?php endif; ?>
+
+    <p class="explanation">
+        <?php echo $this->translate('Edit the settings for this watermark. You can change the image, position, and opacity.'); ?>
+    </p>
+
+    <?php echo $this->form()->openTag($form, ['id' => 'watermark-form']); ?>
+    
+    <div class="field-container">
+        <h3><?php echo $this->translate('Watermark Configuration'); ?></h3>
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('type')); ?>
+                <div class="field-description"><?php echo $this->translate('Select which image orientation this watermark will be applied to.'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('type')); ?>
+            </div>
+        </div>
+        
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('media_id')); ?>
+                <div class="field-description"><?php echo $this->translate('Upload or select an image to use as a watermark. PNG files with transparency work best.'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('media_id')); ?>
+            </div>
+        </div>
+        
+        <h3><?php echo $this->translate('Placement Settings'); ?></h3>
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('position')); ?>
+                <div class="field-description"><?php echo $this->translate('Choose where the watermark should appear on the image.'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('position')); ?>
+            </div>
+        </div>
+        
+        <div class="field">
+            <div class="field-meta">
+                <?php echo $this->formLabel($form->get('opacity')); ?>
+                <div class="field-description"><?php echo $this->translate('Set the opacity of the watermark (0.1 = barely visible, 1.0 = fully opaque).'); ?></div>
+            </div>
+            <div class="inputs">
+                <?php echo $this->formElement($form->get('opacity')); ?>
+            </div>
+        </div>
+    </div>
+    
+    <?php 
+    // Render hidden fields
+    echo $this->formElement($form->get('o:id'));
+    echo $this->formElement($form->get('set_id'));
+    
+    // Render CSRF and other hidden elements
+    foreach ($form as $element) {
+        if (!in_array($element->getName(), ['o:id', 'set_id', 'type', 'media_id', 'position', 'opacity', 'submit'])) {
+            echo $this->formElement($element);
+        }
+    }
+    ?>
+    
+    <div class="form-actions">
+        <button type="submit" class="button primary"><?php echo $this->translate('Save changes'); ?></button>
+        <?php echo $this->hyperlink(
+            $this->translate('Delete this watermark'), 
+            '/admin/watermarker/delete/' . $watermark['id'], 
+            ['class' => 'button delete']
+        ); ?>
+    </div>
+    
+    <?php echo $this->form()->closeTag(); ?>
+</div>

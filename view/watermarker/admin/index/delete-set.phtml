@@ -1,0 +1,31 @@
+<?php
+/**
+ * @var \Laminas\Form\Form $form
+ * @var array $set
+ */
+$this->htmlElement('body')->appendAttribute('class', 'watermarker delete-set');
+$this->headLink()->prependStylesheet($this->assetUrl('css/watermarker.css', 'Watermarker'));
+$escape = $this->plugin('escapeHtml');
+$form->prepare();
+?>
+
+<?php echo $this->pageTitle(sprintf($this->translate('Delete Watermark Set: %s'), $escape($set['name'])), 1, $this->translate('Watermarker')); ?>
+
+<div id="page-actions">
+    <?php echo $this->hyperlink($this->translate('Cancel'), $this->url('admin/watermarker'), ['class' => 'button']); ?>
+</div>
+
+<div class="delete-confirm">
+    <p><?php echo sprintf(
+        $this->translate('Are you sure you want to delete this watermark set? All watermarks in this set will be permanently deleted and any resources using this set will revert to the default watermark.'),
+        $escape($set['name'])
+    ); ?></p>
+
+    <?php if ($set['is_default']): ?>
+    <p class="warning"><?php echo $this->translate('Warning: This is the default watermark set.'); ?></p>
+    <?php endif; ?>
+
+    <?php echo $this->form()->openTag($form); ?>
+    <?php echo $this->formElement($form->get('submit')); ?>
+    <?php echo $this->form()->closeTag(); ?>
+</div>

@@ -1,7 +1,9 @@
 <?php
 /**
  * @var \Laminas\View\Renderer\PhpRenderer $this
+ * @var array $watermarkSets
  * @var array $watermarks
+ * @var array $watermarksBySet
  */
 $this->htmlElement('body')->appendAttribute('class', 'watermarker index');
 $this->headLink()->prependStylesheet($this->assetUrl('css/watermarker.css', 'Watermarker'));
@@ -12,82 +14,124 @@ $escape = $this->plugin('escapeHtml');
 <?php echo $this->pageTitle($this->translate('Watermarker'), 1, $this->translate('Media Watermarking')); ?>
 
 <div id="page-actions">
-    <?php echo $this->hyperlink($this->translate('Add new watermark'), $this->url('admin/watermarker', ['action' => 'add']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Add new watermark set'), $this->url('admin/watermarker', ['action' => 'addSet']), ['class' => 'button']); ?>
     <?php echo $this->hyperlink($this->translate('Configure module'), $this->url('admin/watermarker', ['action' => 'config']), ['class' => 'button']); ?>
-    <?php echo $this->hyperlink($this->translate('Test on recent media'), $this->url('admin/watermarker', ['action' => 'test']), ['class' => 'button']); ?>
+    <!-- <?php echo $this->hyperlink($this->translate('Test on recent media'), $this->url('admin/watermarker', ['action' => 'test']), ['class' => 'button']); ?> -->
     <?php echo $this->hyperlink($this->translate('Check configurations'), $this->url('admin/watermarker', ['action' => 'check']), ['class' => 'button']); ?>
 </div>
 
-<?php if (empty($watermarks)): ?>
+<?php if (empty($watermarkSets)): ?>
 <div class="no-resources">
-    <p><?php echo $this->translate('No watermark configurations found.'); ?></p>
+    <p><?php echo $this->translate('No watermark sets found.'); ?></p>
 </div>
 <?php else: ?>
 
 <div class="browse-controls">
-    <?php echo $this->pagination(); ?>
+    <p><?php echo sprintf($this->translate('Showing %s watermark sets'), count($watermarkSets)); ?></p>
 </div>
+
+<p class="explanation">
+    <?php echo $this->translate('Watermark sets contain multiple watermarks for different image orientations. Create and manage your watermark sets here, then assign them to items or item sets.'); ?>
+</p>
 
 <table class="tablesaw" data-tablesaw-mode="stack">
     <thead>
         <tr>
             <th><?php echo $this->translate('Name'); ?></th>
-            <th><?php echo $this->translate('Preview'); ?></th>
-            <th><?php echo $this->translate('Orientation'); ?></th>
-            <th><?php echo $this->translate('Position'); ?></th>
-            <th><?php echo $this->translate('Opacity'); ?></th>
+            <th><?php echo $this->translate('Default'); ?></th>
             <th><?php echo $this->translate('Status'); ?></th>
+            <th><?php echo $this->translate('Watermarks'); ?></th>
             <th><?php echo $this->translate('Actions'); ?></th>
         </tr>
     </thead>
     <tbody>
-    <?php foreach ($watermarks as $watermark): ?>
-        <?php
-            $asset = null;
-            try {
-                $asset = $this->api()->read('assets', $watermark['media_id'])->getContent();
-            } catch (\Exception $e) {
-                // Asset may have been deleted
-            }
-        ?>
-        <tr>
+        <?php foreach ($watermarkSets as $set): ?>
+        <tr class="watermark-set-row" data-set-id="<?php echo $set['id']; ?>">
             <td>
-                <?php echo $escape($watermark['name']); ?>
-            </td>
-            <td class="watermarker-preview-cell">
-                <?php if ($asset): ?>
-                <div class="watermarker-preview">
-                    <img src="<?php echo $escape($asset->assetUrl()); ?>" alt="<?php echo $escape($watermark['name']); ?>">
-                </div>
-                <?php else: ?>
-                <span class="no-image"><?php echo $this->translate('No preview'); ?></span>
-                <?php endif; ?>
+                <strong><?php echo $escape($set['name']); ?></strong>
+                <br>
+                <a href="<?php echo $this->url('admin/watermarker', ['action' => 'editSet', 'id' => $set['id']]); ?>" class="watermark-set-link"><?php echo $this->translate('Manage watermarks'); ?></a>
             </td>
             <td>
-                <?php echo $escape($watermark['orientation']); ?>
+                <?php echo $set['is_default'] ? '<span class="label">' . $this->translate('Default') . '</span>' : ''; ?>
             </td>
             <td>
-                <?php echo $escape($watermark['position']); ?>
+                <?php echo $set['enabled'] ?
+                    '<span class="status enabled">' . $this->translate('Enabled') . '</span>' :
+                    '<span class="status disabled">' . $this->translate('Disabled') . '</span>'; ?>
             </td>
             <td>
-                <?php echo $escape($watermark['opacity']); ?>
+                <?php
+                $count = isset($watermarksBySet[$set['id']]) ? count($watermarksBySet[$set['id']]) : 0;
+                echo sprintf($this->translate('%d watermarks'), $count);
+                ?>
             </td>
             <td>
-                <?php echo $watermark['enabled'] ? $this->translate('Enabled') : $this->translate('Disabled'); ?>
-            </td>
-            <td>
-                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'edit', 'id' => $watermark['id']]), [
+                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'editSet', 'id' => $set['id']]), [
                     'class' => 'o-icon-edit',
                     'title' => $this->translate('Edit'),
                 ]); ?>
-                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'delete', 'id' => $watermark['id']]), [
+                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'deleteSet', 'id' => $set['id']]), [
                     'class' => 'o-icon-delete',
                     'title' => $this->translate('Delete'),
                 ]); ?>
             </td>
         </tr>
-    <?php endforeach; ?>
+        <tr>
+            <td colspan="5">
+                <div class="watermarker-set-previews">
+                <?php
+                if (isset($watermarksBySet[$set['id']]) && !empty($watermarksBySet[$set['id']])):
+                    // Show up to 3 previews
+                    $previews = array_slice($watermarksBySet[$set['id']], 0, 3);
+                    foreach ($previews as $watermark):
+                        try {
+                            $asset = $this->api()->read('assets', $watermark['media_id'])->getContent();
+                            if ($asset):
+                ?>
+                <div class="watermarker-set-preview">
+                    <img src="<?php echo $escape($asset->assetUrl()); ?>" alt="<?php echo $escape($watermark['type']); ?>" title="<?php echo $escape($watermark['type']); ?>">
+                </div>
+                <?php
+                            endif;
+                        } catch (\Exception $e) {
+                            // Skip if asset is missing
+                        }
+                    endforeach;
+
+                    // If we have more than can be shown
+                    if (count($watermarksBySet[$set['id']]) > 3):
+                ?>
+                <div class="watermarker-more">+<?php echo count($watermarksBySet[$set['id']]) - 3; ?> more</div>
+                <?php
+                    endif;
+                else:
+                ?>
+                <span class="no-image"><?php echo $this->translate('No watermarks'); ?></span>
+                <?php endif; ?>
+                </div>
+            </td>
+        </tr>
+        <?php endforeach; ?>
     </tbody>
 </table>
 
 <?php endif; ?>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // Make rows clickable to edit the watermark set
+    document.querySelectorAll('.watermark-set-row').forEach(function(row) {
+        row.addEventListener('click', function(e) {
+            // Don't navigate if we clicked on a link or button
+            if (e.target.tagName === 'A' || e.target.tagName === 'BUTTON' ||
+                e.target.closest('a') || e.target.closest('button')) {
+                return;
+            }
+
+            var setId = this.getAttribute('data-set-id');
+            window.location.href = '<?php echo $this->url('admin/watermarker', ['action' => 'editSet', 'id' => '']); ?>' + setId;
+        });
+    });
+});
+</script>

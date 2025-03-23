@@ -1,0 +1,49 @@
+<?php
+/**
+ * @var \Omeka\Api\Representation\ItemSetRepresentation $itemSet
+ * @var array|null $assignment
+ */
+// Bypass the router completely with a hardcoded URL
+$assignUrl = '/admin/watermarker/assign/item-set/' . $itemSet->id();
+
+// Get watermark set info if assigned
+$watermarkInfo = null;
+if ($assignment && $assignment['watermark_set_id']) {
+    $connection = $this->api()->read('item_sets', $itemSet->id())->getAdapter()->getServiceLocator()->get('Omeka\Connection');
+    $sql = "SELECT name FROM watermark_set WHERE id = :id";
+    $stmt = $connection->prepare($sql);
+    $stmt->bindValue('id', $assignment['watermark_set_id']);
+    $stmt->execute();
+    $setInfo = $stmt->fetch();
+    
+    if ($setInfo) {
+        $watermarkInfo = sprintf('Using watermark set: "%s"', $setInfo['name']);
+    }
+} else if ($assignment && $assignment['watermark_set_id'] === null) {
+    $watermarkInfo = 'Watermarking disabled for this item set and its items';
+} else {
+    $watermarkInfo = 'Using default watermark settings';
+}
+?>
+
+<div id="watermarker" class="section">
+    <h3><?php echo $this->translate('Watermarking'); ?></h3>
+    
+    <div class="property">
+        <h4><?php echo $this->translate('Current Watermark'); ?></h4>
+        <div class="values">
+            <div class="value"><?php echo $this->escapeHtml($watermarkInfo); ?></div>
+        </div>
+    </div>
+    
+    <div class="property">
+        <h4><?php echo $this->translate('Inheritance'); ?></h4>
+        <div class="values">
+            <div class="value">All items in this item set will inherit these watermark settings unless they have their own settings.</div>
+        </div>
+    </div>
+    
+    <a href="<?php echo $assignUrl; ?>" class="button">
+        <?php echo $this->translate('Edit Watermark Settings'); ?>
+    </a>
+</div>
