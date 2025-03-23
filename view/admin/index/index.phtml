@@ -1,0 +1,42 @@
+<?php
+$this->headScript()->appendFile($this->assetUrl('js/watermarker.js', 'Watermarker'));
+$this->headLink()->appendStylesheet($this->assetUrl('css/watermarker.css', 'Watermarker'));
+?>
+
+<?php if (isset($watermarker)): ?>
+<div class="watermarker">
+    <h2><?php echo $this->translate('Watermark Management'); ?></h2>
+    <div class="watermarker-controls">
+        <p><?php echo $this->translate('Manage watermarks for your Omeka S resources.'); ?></p>
+        <a href="<?php echo $this->url('admin/watermarker/sets'); ?>" class="button"><?php echo $this->translate('Watermark Sets'); ?></a>
+        <a href="<?php echo $this->url('admin/watermarker/settings'); ?>" class="button"><?php echo $this->translate('Settings'); ?></a>
+    </div>
+
+    <?php if (isset($watermarkSets) && count($watermarkSets)): ?>
+    <div class="watermarker-sets">
+        <h3><?php echo $this->translate('Available Watermark Sets'); ?></h3>
+        <div class="watermark-set-list">
+            <?php foreach ($watermarkSets as $set): ?>
+            <div class="watermark-set">
+                <h4><?php echo $this->escapeHtml($set->getName()); ?></h4>
+                <?php if ($set->getWatermarkMediaId()): ?>
+                <div class="watermark-preview">
+                    <?php echo $this->media($set->getWatermarkMedia()); ?>
+                </div>
+                <?php endif; ?>
+                <div class="watermark-set-actions">
+                    <a href="<?php echo $this->url('admin/watermarker/sets/edit', ['id' => $set->getId()]); ?>" class="button"><?php echo $this->translate('Edit'); ?></a>
+                    <a href="<?php echo $this->url('admin/watermarker/sets/delete', ['id' => $set->getId()]); ?>" class="button delete"><?php echo $this->translate('Delete'); ?></a>
+                </div>
+            </div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php else: ?>
+    <div class="no-watermark-sets">
+        <p><?php echo $this->translate('No watermark sets available. Create a watermark set to get started.'); ?></p>
+        <a href="<?php echo $this->url('admin/watermarker/sets/add'); ?>" class="button"><?php echo $this->translate('Create Watermark Set'); ?></a>
+    </div>
+    <?php endif; ?>
+</div>
+<?php endif; ?>

@@ -6,9 +6,18 @@
 namespace Watermarker;
 
 return [
-    'controllers' => [
+    'api_adapters' => [
         'invokables' => [
-            'Watermarker\Controller\Admin\Index' => Controller\Admin\IndexController::class,
+            'watermark_sets' => Api\Adapter\WatermarkSetAdapter::class,
+            'watermark_settings' => Api\Adapter\WatermarkSettingAdapter::class,
+            'watermark_assignments' => Api\Adapter\WatermarkAssignmentAdapter::class,
+        ],
+    ],
+    'controllers' => [
+        'factories' => [
+            'Watermarker\Controller\Admin\Index' => 'Watermarker\Controller\Admin\IndexControllerFactory',
+            'Watermarker\Controller\Admin\Assignment' => Service\Factory\AssignmentControllerFactory::class,
+            'Watermarker\Controller\Api' => Service\Factory\ApiControllerFactory::class,
         ],
     ],
     'navigation' => [
@@ -28,15 +37,11 @@ return [
                     'watermarker' => [
                         'type' => 'Segment',
                         'options' => [
-                            'route' => '/watermarker[/:action[/:id]]',
+                            'route' => '/watermarker',
                             'defaults' => [
                                 '__NAMESPACE__' => 'Watermarker\Controller\Admin',
                                 'controller' => 'Index',
                                 'action' => 'index',
-                            ],
-                            'constraints' => [
-                                'action' => '[a-zA-Z][a-zA-Z0-9_-]*',
-                                'id' => '\d+',
                             ],
                         ],
                         'may_terminate' => true,
@@ -104,28 +109,11 @@ return [
                                     'route' => '/assign',
                                     'defaults' => [
                                         '__NAMESPACE__' => 'Watermarker\Controller\Admin',
-                                        'controller' => 'Index',
+                                        'controller' => 'Assignment',
                                         'action' => 'assign',
                                     ],
                                 ],
-                                'may_terminate' => false,
-                                'child_routes' => [
-                                    'resource' => [
-                                        'type' => 'Segment',
-                                        'options' => [
-                                            'route' => '/:resource-type/:resource-id',
-                                            'defaults' => [
-                                                '__NAMESPACE__' => 'Watermarker\Controller\Admin',
-                                                'controller' => 'Index',
-                                                'action' => 'assign',
-                                            ],
-                                            'constraints' => [
-                                                'resource-type' => '(item|item-set)',
-                                                'resource-id' => '\d+',
-                                            ],
-                                        ],
-                                    ],
-                                ],
+                                'may_terminate' => true,
                             ],
                             'info' => [
                                 'type' => 'Segment',
@@ -133,11 +121,11 @@ return [
                                     'route' => '/info/:resource-type/:resource-id',
                                     'defaults' => [
                                         '__NAMESPACE__' => 'Watermarker\Controller\Admin',
-                                        'controller' => 'Index',
+                                        'controller' => 'Assignment',
                                         'action' => 'info',
                                     ],
                                     'constraints' => [
-                                        'resource-type' => '(item|item-set)',
+                                        'resource-type' => '(item|item-set|media)',
                                         'resource-id' => '\d+',
                                     ],
                                 ],
@@ -146,6 +134,20 @@ return [
                         ],
                     ],
                 ],
+            ],
+            'watermarker-api' => [
+                'type' => 'Segment',
+                'options' => [
+                    'route' => '/watermarker-api/:action',
+                    'defaults' => [
+                        '__NAMESPACE__' => 'Watermarker\Controller',
+                        'controller' => 'Api',
+                    ],
+                    'constraints' => [
+                        'action' => '(getAssignment|setAssignment|getWatermarkSets)',
+                    ],
+                ],
+                'may_terminate' => true,
             ],
         ],
     ],
@@ -164,7 +166,9 @@ return [
     ],
     'service_manager' => [
         'factories' => [
-            'Watermarker\WatermarkService' => Service\WatermarkServiceFactory::class,
+            'Watermarker\Service\WatermarkService' => 'Watermarker\Service\WatermarkServiceFactory',
+            'Watermarker\AssignmentService' => Service\Factory\AssignmentServiceFactory::class,
+            'Watermarker\Service\WatermarkApplicator' => Service\Factory\WatermarkApplicatorFactory::class,
         ],
         'aliases' => [
             'Watermarker\TempFileFactory' => 'Omeka\File\TempFileFactory',
@@ -185,6 +189,19 @@ return [
             'watermark_enabled' => true,
             'apply_on_upload' => true,
             'apply_on_import' => true,
+        ],
+    ],
+    'entity_manager' => [
+        'mapping_classes_paths' => [
+            dirname(__DIR__) . '/src/Entity',
+        ],
+        'proxy_paths' => [
+            dirname(__DIR__) . '/data/doctrine-proxies',
+        ],
+    ],
+    'cli_commands' => [
+        'factories' => [
+            Command\WatermarkProcessor::class => Service\Factory\CommandFactory::class,
         ],
     ],
     // No need to register jobs anymore since we're not using the job system

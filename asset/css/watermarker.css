@@ -121,34 +121,37 @@ tr.watermark-set-row:hover {
 /* Watermark position selector */
 .watermark-position-selector {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  grid-gap: 5px;
-  max-width: 250px;
+  grid-template-columns: repeat(3, 60px);
+  grid-template-rows: repeat(3, 60px);
+  gap: 5px;
   margin: 10px 0;
 }
 
-.watermark-position-option {
+.position-cell {
+  border: 1px solid #ddd;
+  background: #f5f5f5;
   display: flex;
-  justify-content: center;
   align-items: center;
-  background-color: #f7f7f7;
-  border: 1px solid #dfdfdf;
-  height: 40px;
+  justify-content: center;
   cursor: pointer;
+  transition: background-color 0.2s;
 }
 
-.watermark-position-option[data-position="bottom-full"] {
+.position-cell:hover {
+  background: #e0e0e0;
+}
+
+.position-cell.active {
+  background: #4e78cc;
+  color: white;
+  border-color: #2c5499;
+}
+
+/* Bottom-full position is a special case - spans full width */
+.position-cell[data-position="bottom-full"] {
   grid-column: 1 / span 3;
-  background-color: #edfaff;
-}
-
-.watermark-position-option:hover {
-  background-color: #eaeaea;
-}
-
-.watermark-position-option.selected {
-  background-color: #d0e8ff;
-  border-color: #4287f5;
+  grid-row: 4;
+  height: 30px;
 }
 
 /* Add these styles to ensure the watermark tab works well */
@@ -272,4 +275,169 @@ tr.watermark-set-row:hover {
   #watermark-section .field-meta {
     margin-bottom: 0.5em;
   }
+}
+
+/* Watermark Sets List */
+.watermark-set-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 15px;
+}
+
+.watermark-set {
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  padding: 15px;
+  width: 300px;
+}
+
+.watermark-set h4 {
+  margin-top: 0;
+  margin-bottom: 10px;
+}
+
+.watermark-preview {
+  margin-bottom: 10px;
+}
+
+.watermark-set-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+}
+
+/* Watermark Form (in edit pages) */
+.watermark-form {
+  margin-bottom: 10px;
+}
+
+.watermark-select {
+  min-width: 250px;
+  margin-right: 10px;
+}
+
+.watermark-save-button {
+  margin-top: 10px;
+}
+
+.watermark-status {
+  margin-top: 8px;
+  padding: 5px 0;
+  font-size: 0.9em;
+}
+
+.watermark-status.success {
+  color: #3c763d;
+}
+
+.watermark-status.error {
+  color: #a94442;
+  padding: 5px;
+  background-color: #f2dede;
+  border-radius: 3px;
+}
+
+.watermark-status.pending {
+  color: #777;
+  font-style: italic;
+}
+
+/* Watermark preview */
+.watermark-media-preview {
+  max-width: 300px;
+  margin-top: 10px;
+  padding: 10px;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+}
+
+.watermark-media-preview img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* No watermark sets message */
+.no-watermark-sets {
+  margin: 20px 0;
+  padding: 15px;
+  background: #f5f5f5;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+}
+
+/* Watermark form */
+.watermark-form {
+    margin-bottom: 1rem;
+}
+
+.watermark-form select {
+    margin-right: 1rem;
+    margin-bottom: 0.5rem;
+    min-width: 200px;
+}
+
+.watermark-status {
+    margin: 0.5rem 0;
+    padding: 0.5rem 0;
+}
+
+.watermark-status.success {
+    color: #46a546;
+}
+
+.watermark-status.error {
+    color: #9d261d;
+}
+
+.watermark-status.pending {
+    color: #0088cc;
+    font-style: italic;
+}
+
+.watermark-save-button {
+    margin-top: 0.5rem;
+}
+
+/* Tabs and sections */
+.section-watermark {
+    margin-top: 1rem;
+    border-top: 1px solid #dfdfdf;
+    padding-top: 1rem;
+}
+
+/* Watermark sets management */
+.watermark-sets-list {
+    margin: 1rem 0;
+}
+
+.watermark-set-item {
+    padding: 0.5rem;
+    border: 1px solid #dfdfdf;
+    margin-bottom: 0.5rem;
+    background: #f9f9f9;
+}
+
+.watermark-set-title {
+    font-weight: bold;
+}
+
+.watermark-set-actions {
+    margin-top: 0.5rem;
+}
+
+.watermark-set-actions a {
+    margin-right: 0.5rem;
+}
+
+/* Watermark image preview */
+.watermark-preview {
+    max-width: 200px;
+    max-height: 200px;
+    border: 1px solid #dfdfdf;
+    margin: 0.5rem 0;
+    padding: 0.5rem;
+    background: #fff;
 }

@@ -98,8 +98,9 @@ class Module extends AbstractModule
             CREATE TABLE watermark_assignment (
                 id INT AUTO_INCREMENT NOT NULL,
                 resource_id INT NOT NULL,
-                resource_type VARCHAR(50) NOT NULL, /* item, item-set */
-                watermark_set_id INT NULL, /* NULL means no watermark */
+                resource_type VARCHAR(50) NOT NULL, /* items, item_sets, media */
+                watermark_set_id INT NULL, /* NULL means default watermark set */
+                explicitly_no_watermark TINYINT(1) NOT NULL DEFAULT 0, /* If true, no watermark should be applied regardless of inheritance */
                 created DATETIME NOT NULL,
                 modified DATETIME DEFAULT NULL,
                 PRIMARY KEY (id),
@@ -299,6 +300,35 @@ class Module extends AbstractModule
                 $logger->err($e->getTraceAsString());
             }
         }
+
+        if (version_compare($oldVersion, '1.2.0', '<')) {
+            // Add explicitly_no_watermark column
+            $logger->info('Watermarker upgrade: Adding explicitly_no_watermark column to watermark_assignment table');
+
+            try {
+                // Check if the column already exists
+                $columnExists = false;
+                try {
+                    $sql = "SHOW COLUMNS FROM watermark_assignment LIKE 'explicitly_no_watermark'";
+                    $stmt = $connection->query($sql);
+                    $columnExists = (bool) $stmt->fetchColumn();
+                } catch (\Exception $e) {
+                    $logger->err('Watermarker upgrade: Error checking for column: ' . $e->getMessage());
+                }
+
+                if (!$columnExists) {
+                    $sql = "ALTER TABLE watermark_assignment
+                            ADD COLUMN explicitly_no_watermark TINYINT(1) NOT NULL DEFAULT 0";
+                    $connection->exec($sql);
+                    $logger->info('Watermarker upgrade: Column added successfully');
+                } else {
+                    $logger->info('Watermarker upgrade: Column already exists, skipping');
+                }
+            } catch (\Exception $e) {
+                $logger->err('Watermarker upgrade: Error adding column: ' . $e->getMessage());
+                $logger->err($e->getTraceAsString());
+            }
+        }
     }
 
     /**
@@ -306,7 +336,7 @@ class Module extends AbstractModule
      *
      * @param SharedEventManagerInterface $sharedEventManager
      */
-    public function attachListeners(SharedEventManagerInterface $sharedEventManager)
+    public function attachListeners(SharedEventManagerInterface $sharedEventManager): void
     {
         $logger = $this->getServiceLocator()->get('Omeka\Logger');
         $logger->info('Watermarker: Attaching event listeners');
@@ -377,6 +407,51 @@ class Module extends AbstractModule
             'Omeka\Controller\Admin\ItemSet',
             'view.edit.form.before',
             [$this, 'addItemSetWatermarkTabEdit']
+        );
+
+        // Listen for API file uploads
+        $sharedEventManager->attach(
+            '*',
+            'api.hydrate.post',
+            [$this, 'handleIngest']
+        );
+
+        // Listen for watermark assignments
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\Item',
+            'view.edit.form.after',
+            [$this, 'addWatermarkFormToItem']
+        );
+
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\ItemSet',
+            'view.edit.form.after',
+            [$this, 'addWatermarkFormToItemSet']
+        );
+
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\Media',
+            'view.edit.form.after',
+            [$this, 'addWatermarkFormToMedia']
+        );
+
+        // Listen for form submissions
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\Item',
+            'view.edit.after',
+            [$this, 'handleFormSubmission']
+        );
+
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\ItemSet',
+            'view.edit.after',
+            [$this, 'handleFormSubmission']
+        );
+
+        $sharedEventManager->attach(
+            'Omeka\Controller\Admin\Media',
+            'view.edit.after',
+            [$this, 'handleFormSubmission']
         );
 
         // Enable this for debugging only - it generates too much noise in logs
@@ -533,74 +608,56 @@ class Module extends AbstractModule
         $view = $event->getTarget();
         $itemSet = $view->itemSet;
 
+        // Add required JavaScript only
+        $view->headScript()->appendFile($view->assetUrl('js/watermarker.js', 'Watermarker'));
+
         if (!$itemSet) {
-            $logger->err('Watermarker: No item set found in view');
-            // Even when no item set is found, we'll still inject an empty data div for debugging
-            echo "<!-- Watermarker: No item set found! -->\n";
-            echo '<div id="watermarker-data" data-watermarker=\'{"error":"No item set found"}\' style="display:none;"></div>';
             return;
         }
 
-        $services = $this->getServiceLocator();
-        $connection = $services->get('Omeka\Connection');
-
-        // Check if this item set has a watermark assignment
-        $sql = "SELECT * FROM watermark_assignment
-                WHERE resource_id = :resource_id AND resource_type = 'item-set'";
-        $stmt = $connection->prepare($sql);
-        $stmt->bindValue('resource_id', $itemSet->id());
-        $stmt->execute();
-        $assignment = $stmt->fetch();
+        $watermarkService = $this->getServiceLocator()->get('Watermarker\Service\WatermarkService');
+        $watermarkSets = $watermarkService->getAllWatermarkSets();
+        $currentAssignment = $watermarkService->getWatermarkAssignment($itemSet->id(), 'item_set');
 
         // Create direct URL to bypass router issues
-        $assignUrl = '/admin/watermarker/assign/item-set/' . $itemSet->id();
+        $assignUrl = sprintf('/admin/watermarker/assign/%s/%s',
+            $itemSet->resourceName() === 'item_sets' ? 'item-set' : 'item',
+            $itemSet->id()
+        );
 
-        // Get watermark set info if assigned
-        $watermarkInfo = null;
-        if ($assignment && $assignment['watermark_set_id']) {
-            $sql = "SELECT name FROM watermark_set WHERE id = :id";
-            $stmt = $connection->prepare($sql);
-            $stmt->bindValue('id', $assignment['watermark_set_id']);
-            $stmt->execute();
-            $setInfo = $stmt->fetch();
+        // Log the generated URL
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info(sprintf('Watermarker: Generated assign URL: %s', $assignUrl));
 
-            if ($setInfo) {
-                $watermarkInfo = sprintf('Using watermark set: "%s"', $setInfo['name']);
-            }
-        } else if ($assignment && $assignment['watermark_set_id'] === null) {
-            $watermarkInfo = 'Watermarking disabled for this item set and its items';
-        } else {
-            $watermarkInfo = 'Using default watermark settings';
-        }
-
-        // Store assignment information in a data attribute for JavaScript to use
-        $watermarker_data = json_encode([
-            'resourceId' => $itemSet->id(),
+        // Prepare data for JavaScript
+        $watermarkData = [
             'resourceType' => 'item-set',
-            'watermarkInfo' => $watermarkInfo,
+            'resourceId' => $itemSet->id(),
+            'watermarkSets' => $watermarkSets,
+            'currentAssignment' => $currentAssignment ? $currentAssignment->watermarkSetId() : null,
             'assignUrl' => $assignUrl
-        ]);
+        ];
 
-        // For template purposes, create the HTML structure that will be used by JS
-        $itemHtml = '<div class="field">
-                    <div class="field-meta">
-                        <label>Watermark Settings</label>
-                    </div>
-                    <div class="inputs">
-                        <div class="value">
-                            <p class="watermark-status"></p>
-                            <a href="" class="button watermark-edit-link" target="_blank">Edit Watermark Settings</a>
-                        </div>
-                    </div>
-                </div>';
+        // Add data div for JavaScript
+        echo '<div id="watermarker-data" data-watermarker=\'' . json_encode($watermarkData) . '\'></div>';
 
-        // Inject the data div with debugging information and template
-        echo "<!-- Watermarker: Injecting data for item set ID " . $itemSet->id() . " -->\n";
-        echo '<div id="watermarker-data" data-watermarker=\'' . $watermarker_data . '\' style="display:none;">Watermarker data present</div>';
-        // Also inject the template data for JavaScript to use
-        echo '<div id="watermarker-template" style="display:none;">' . $itemHtml . '</div>';
+        // Add template div for JavaScript
+        $template = '<div class="field">' .
+            '<div class="field-meta">' .
+            '<label>Watermark Set</label>' .
+            '</div>' .
+            '<div class="inputs">' .
+            '<div class="value">' .
+            '<select id="watermark-set-select" class="watermark-set-select">' .
+            '<option value="">None</option>' .
+            '<option value="default">Default</option>' .
+            '</select>' .
+            '<button type="button" class="button watermark-save-button">Save</button>' .
+            '</div>' .
+            '</div>' .
+            '</div>';
 
-        echo "<!-- Watermarker: Data injection complete -->\n";
+        echo '<div id="watermarker-template" style="display: none;">' . $template . '</div>';
     }
 
     /**
@@ -1656,7 +1713,7 @@ class Module extends AbstractModule
      */
     protected function watermarkService()
     {
-        return $this->getServiceLocator()->get('Watermarker\WatermarkService');
+        return $this->getServiceLocator()->get('Watermarker\Service\WatermarkService');
     }
 
     /**
@@ -1696,5 +1753,231 @@ class Module extends AbstractModule
         $settings->set('watermarker_apply_on_import', isset($formData['apply_on_import']));
 
         return true;
+    }
+
+    /**
+     * Listen for API file uploads
+     *
+     * @param Event $event
+     */
+    public function handleIngest(Event $event)
+    {
+        // Get the request and entity
+        $request = $event->getParam('request');
+        $entity = $event->getParam('entity');
+
+        if (!$request || !$entity) {
+            return;
+        }
+
+        // Only process media resources that are files
+        if (!$entity instanceof \Omeka\Entity\Media || $entity->getIngester() !== 'upload') {
+            return;
+        }
+
+        // Check if auto-watermarking is enabled
+        $settings = $this->getServiceLocator()->get('Omeka\Settings');
+        if (!$settings->get('watermarker_enabled', true) || !$settings->get('watermarker_apply_on_upload', true)) {
+            return;
+        }
+
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info(sprintf('Watermarker: Processing new upload for media ID %d', $entity->getId()));
+
+        // Schedule watermarking to happen after response
+        $mediaId = $entity->getId();
+
+        // Use register_shutdown_function to ensure this runs after the response
+        register_shutdown_function(function() use ($mediaId, $logger) {
+            try {
+                // Wait a moment for the file to be fully processed
+                sleep(2);
+
+                $logger->info(sprintf('Watermarker: Applying watermark to media ID %d', $mediaId));
+
+                // Get the watermark applicator service
+                $applicator = $this->getServiceLocator()->get('Watermarker\Service\WatermarkApplicator');
+
+                // Apply the watermark
+                $result = $applicator->applyWatermark($mediaId);
+
+                if ($result) {
+                    $logger->info(sprintf('Watermarker: Successfully applied watermark to media ID %d', $mediaId));
+                } else {
+                    $logger->warn(sprintf('Watermarker: Failed to apply watermark to media ID %d', $mediaId));
+                }
+            } catch (\Exception $e) {
+                $logger->err('Watermarker: Error in watermarking new upload: ' . $e->getMessage());
+                $logger->err($e->getTraceAsString());
+            }
+        });
+    }
+
+    /**
+     * Add watermark form to the item edit page.
+     *
+     * @param Event $event
+     */
+    public function addWatermarkFormToItem(Event $event): void
+    {
+        $view = $event->getTarget();
+        $item = $view->item;
+        $itemId = $item->id();
+
+        echo $this->getWatermarkFormHtml($view, 'item', $itemId);
+    }
+
+    /**
+     * Add watermark form to the item set edit page.
+     *
+     * @param Event $event
+     */
+    public function addWatermarkFormToItemSet(Event $event): void
+    {
+        $view = $event->getTarget();
+        $itemSet = $view->itemSet;
+        $itemSetId = $itemSet->id();
+
+        echo $this->getWatermarkFormHtml($view, 'item-set', $itemSetId);
+    }
+
+    /**
+     * Add watermark form to the media edit page.
+     *
+     * @param Event $event
+     */
+    public function addWatermarkFormToMedia(Event $event): void
+    {
+        $view = $event->getTarget();
+        $media = $view->media;
+        $mediaId = $media->id();
+
+        echo $this->getWatermarkFormHtml($view, 'media', $mediaId);
+    }
+
+    /**
+     * Get HTML for the watermark form.
+     *
+     * @param PhpRenderer $view
+     * @param string $resourceType
+     * @param int $resourceId
+     * @return string
+     */
+    protected function getWatermarkFormHtml($view, $resourceType, $resourceId)
+    {
+        $api = $this->getServiceLocator()->get('Omeka\ApiManager');
+        $router = $this->getServiceLocator()->get('Router');
+
+        // Get watermark sets from API
+        $watermarkSets = [];
+        try {
+            $response = $api->search('watermark_sets', ['enabled' => true]);
+            $watermarkSets = $response->getContent();
+        } catch (\Exception $e) {
+            // Log error but continue
+            error_log('Error fetching watermark sets: ' . $e->getMessage());
+        }
+
+        // Format watermark sets for JSON
+        $formattedSets = [];
+        foreach ($watermarkSets as $set) {
+            $formattedSets[] = [
+                'id' => $set->id(),
+                'name' => $set->name()
+            ];
+        }
+
+        // Get current assignment
+        $currentAssignment = null;
+        $currentSetId = null;
+        $isExplicitlyNoWatermark = false;
+        $isDefault = true;
+
+        // Convert resource type for API
+        $apiResourceType = $resourceType;
+        if ($resourceType == 'item') {
+            $apiResourceType = 'items';
+        } else if ($resourceType == 'item-set') {
+            $apiResourceType = 'item_sets';
+        }
+
+        try {
+            $assignments = $api->search('watermark_assignments', [
+                'resource_type' => $apiResourceType,
+                'resource_id' => $resourceId
+            ])->getContent();
+
+            if (count($assignments) > 0) {
+                $currentAssignment = $assignments[0];
+                $isDefault = false;
+
+                if ($currentAssignment->explicitlyNoWatermark()) {
+                    $isExplicitlyNoWatermark = true;
+                    $currentSetId = 'none';
+                } else if ($currentAssignment->watermarkSet()) {
+                    $currentSetId = $currentAssignment->watermarkSet()->id();
+                }
+            }
+        } catch (\Exception $e) {
+            error_log('Error fetching watermark assignment: ' . $e->getMessage());
+        }
+
+        // Include required JavaScript
+        $view->headScript()->appendFile($view->assetUrl('js/watermarker-edit.js', 'Watermarker'));
+
+        // Generate HTML
+        $html = '<div class="field">';
+        $html .= '<div class="field-meta">';
+        $html .= '<label>' . $view->translate('Watermark') . '</label>';
+        $html .= '<div class="field-description">' . $view->translate('Apply a watermark to media files associated with this resource.') . '</div>';
+        $html .= '</div>';
+        $html .= '<div class="inputs">';
+        $html .= '<div class="watermark-form" data-resource-type="' . $resourceType . '" data-resource-id="' . $resourceId . '" data-api-url="' . $router->assemble(['action' => 'setAssignment'], ['name' => 'watermarker-api']) . '">';
+        $html .= '<select name="watermark_set" class="watermark-select">';
+        $html .= '<option value="none"' . ($isExplicitlyNoWatermark ? ' selected' : '') . '>' . $view->translate('None (no watermark)') . '</option>';
+        $html .= '<option value="default"' . ($isDefault ? ' selected' : '') . '>' . $view->translate('Default (inherit from parent)') . '</option>';
+
+        // Add watermark sets to dropdown
+        foreach ($watermarkSets as $set) {
+            $selected = ($currentSetId == $set->id()) ? ' selected' : '';
+            $html .= '<option value="' . $set->id() . '"' . $selected . '>' . $view->escapeHtml($set->name()) . '</option>';
+        }
+
+        $html .= '</select>';
+
+        // Current status
+        $html .= '<div class="watermark-status">';
+        if ($isExplicitlyNoWatermark) {
+            $html .= $view->translate('Watermarking explicitly disabled for this resource.');
+        } else if (!$isDefault && $currentSetId) {
+            $html .= $view->translate('Using custom watermark set.');
+        } else {
+            $html .= $view->translate('Using default watermark settings.');
+        }
+        $html .= '</div>';
+
+        // Save button
+        $html .= '<button type="button" class="watermark-save-button button">' . $view->translate('Save Watermark Setting') . '</button>';
+        $html .= '</div>';
+        $html .= '</div>';
+        $html .= '</div>';
+
+        return $html;
+    }
+
+    /**
+     * Handle form submission.
+     *
+     * @param Event $event
+     */
+    public function handleFormSubmission(Event $event): void
+    {
+        $request = $this->getServiceLocator()->get('Request');
+        if (!$request->isPost()) {
+            return;
+        }
+
+        // Process form submission if needed
+        // This is a placeholder for now - we'll handle assignments via AJAX
     }
 }

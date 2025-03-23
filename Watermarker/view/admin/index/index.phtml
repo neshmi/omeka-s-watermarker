@@ -1,0 +1,24 @@
+<!-- Watermarker template - will be added to the Advanced tab -->
+<div id="watermarker-template" style="display: none;">
+    <fieldset id="watermark-fieldset" class="field-container">
+        <legend>Watermark Settings</legend>
+        <div id="watermark-container" class="field">
+            <div class="field-meta">
+                <label for="watermark-set-select">Watermark Set</label>
+                <div class="field-description">
+                    Select which watermark set to apply to this resource.
+                </div>
+            </div>
+            <div class="inputs">
+                <select id="watermark-set-select" name="watermark_set">
+                    <option value="">None (no watermark)</option>
+                    <option value="default">Default (inherit from parent)</option>
+                </select>
+                <div id="watermark-status" class="watermark-status field-description"></div>
+                <div class="field-actions">
+                    <button type="button" class="watermark-save-button button">Save Watermark Setting</button>
+                </div>
+            </div>
+        </div>
+    </fieldset>
+</div>

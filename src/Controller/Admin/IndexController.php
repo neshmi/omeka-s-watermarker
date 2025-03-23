@@ -13,6 +13,17 @@ use Omeka\Form\ConfirmForm;
 
 class IndexController extends AbstractActionController
 {
+    protected $logger;
+    protected $connection;
+    protected $api;
+
+    public function __construct($logger, $connection, $api)
+    {
+        $this->logger = $logger;
+        $this->connection = $connection;
+        $this->api = $api;
+    }
+
     /**
      * List all watermark sets and watermarks
      */
@@ -20,11 +31,11 @@ class IndexController extends AbstractActionController
     {
         $services = $this->getEvent()->getApplication()->getServiceManager();
         $connection = $services->get('Omeka\Connection');
-        
+
         // Get all watermark sets
         $stmt = $connection->query("SELECT * FROM watermark_set ORDER BY id ASC");
         $watermarkSets = $stmt->fetchAll();
-        
+
         // Get all watermarks with set info
         $stmt = $connection->query("
             SELECT ws.*, s.name as set_name, s.is_default, s.enabled as set_enabled
@@ -33,7 +44,7 @@ class IndexController extends AbstractActionController
             ORDER BY s.is_default DESC, s.id ASC, ws.type ASC
         ");
         $watermarks = $stmt->fetchAll();
-        
+
         // Group watermarks by set
         $watermarksBySet = [];
         foreach ($watermarks as $watermark) {
@@ -69,7 +80,7 @@ class IndexController extends AbstractActionController
 
                 // Check if this is the default set
                 $isDefault = isset($formData['is_default']) ? 1 : 0;
-                
+
                 // If this is set as default, clear any other default sets
                 if ($isDefault) {
                     $sql = "UPDATE watermark_set SET is_default = 0";
@@ -89,7 +100,7 @@ class IndexController extends AbstractActionController
                 $setId = $connection->lastInsertId();
 
                 $this->messenger()->addSuccess('Watermark set added.');
-                return $this->redirect()->toRoute('admin/watermarker/set', ['action' => 'edit', 'id' => $setId]);
+                return $this->redirect()->toRoute('admin/watermarker/set-add');
             } else {
                 $this->messenger()->addFormErrors($form);
             }
@@ -143,10 +154,10 @@ class IndexController extends AbstractActionController
 
             if ($form->isValid()) {
                 $formData = $form->getData();
-                
+
                 // Check if this is the default set
                 $isDefault = isset($formData['is_default']) ? 1 : 0;
-                
+
                 // If this is set as default, clear any other default sets
                 if ($isDefault) {
                     $sql = "UPDATE watermark_set SET is_default = 0";
@@ -218,7 +229,7 @@ class IndexController extends AbstractActionController
                 $stmt->execute();
 
                 // Clear any assignments to this set
-                $sql = "UPDATE watermark_assignment SET watermark_set_id = NULL 
+                $sql = "UPDATE watermark_assignment SET watermark_set_id = NULL
                         WHERE watermark_set_id = :set_id";
                 $stmt = $connection->prepare($sql);
                 $stmt->bindValue('set_id', $id);
@@ -226,7 +237,7 @@ class IndexController extends AbstractActionController
 
                 // If this was the default set, try to set another set as default
                 if ($set['is_default']) {
-                    $sql = "UPDATE watermark_set SET is_default = 1 
+                    $sql = "UPDATE watermark_set SET is_default = 1
                             WHERE enabled = 1 ORDER BY id ASC LIMIT 1";
                     $connection->exec($sql);
                 }
@@ -252,24 +263,24 @@ class IndexController extends AbstractActionController
     {
         // Get set_id from query parameters
         $setId = $this->params()->fromQuery('set_id');
-        
+
         // Basic validation
         if (!$setId) {
             $this->messenger()->addError('Set ID parameter is missing. Please check the URL.');
             return $this->redirect()->toRoute('admin/watermarker');
         }
-        
+
         // Verify set exists
         $services = $this->getEvent()->getApplication()->getServiceManager();
         $connection = $services->get('Omeka\Connection');
         $logger = $services->get('Omeka\Logger');
-        
+
         $sql = "SELECT * FROM watermark_set WHERE id = :id LIMIT 1";
         $stmt = $connection->prepare($sql);
         $stmt->bindValue('id', $setId);
         $stmt->execute();
         $set = $stmt->fetch();
-        
+
         if (!$set) {
             $this->messenger()->addError('Watermark set not found with ID: ' . $setId);
             return $this->redirect()->toRoute('admin/watermarker');
@@ -321,7 +332,7 @@ class IndexController extends AbstractActionController
         $view->setVariable('set', $set);
         $view->setVariable('set_id', $setId); // Explicitly pass the set_id
         $view->setTemplate('watermarker/admin/index/add');
-        
+
         // Also dump the request parameters to the log
         $logger->info('Request params:', [
             'id' => $this->params('id'),
@@ -346,7 +357,7 @@ class IndexController extends AbstractActionController
                 FROM watermark_setting w
                 JOIN watermark_set s ON w.set_id = s.id
                 WHERE w.id = :id LIMIT 1";
-                
+
         $stmt = $connection->prepare($sql);
         $stmt->bindValue('id', $id);
         $stmt->execute();
@@ -414,11 +425,11 @@ class IndexController extends AbstractActionController
         $connection = $services->get('Omeka\Connection');
 
         // Get watermark data
-        $sql = "SELECT w.*, s.id as set_id 
-                FROM watermark_setting w 
-                JOIN watermark_set s ON w.set_id = s.id 
+        $sql = "SELECT w.*, s.id as set_id
+                FROM watermark_setting w
+                JOIN watermark_set s ON w.set_id = s.id
                 WHERE w.id = :id LIMIT 1";
-                
+
         $stmt = $connection->prepare($sql);
         $stmt->bindValue('id', $id);
         $stmt->execute();
@@ -495,187 +506,136 @@ class IndexController extends AbstractActionController
      */
     public function assignAction()
     {
-        // Try to get parameters from various sources
-        // First try from route
-        $resourceId = $this->params()->fromRoute('resource-id');
-        $resourceType = $this->params()->fromRoute('resource-type');
-        
-        // Next try from query
-        if (!$resourceId) {
-            $resourceId = $this->params()->fromQuery('resource-id');
-        }
-        if (!$resourceType) {
-            $resourceType = $this->params()->fromQuery('resource-type');
-        }
-        
-        // Finally, try to parse them from the URL path
-        if (!$resourceId || !$resourceType) {
-            $request = $this->getRequest();
-            $requestUri = $request->getRequestUri();
-            
-            // Log the current request URI
-            $this->getServiceLocator()->get('Omeka\Logger')->info(sprintf(
-                'Watermarker: Request URI: %s',
-                $requestUri
-            ));
-            
-            // Simple regex to extract resource type and ID from the URL
-            if (preg_match('#/assign/([^/]+)/(\d+)#', $requestUri, $matches)) {
-                $extractedType = $matches[1];
-                $extractedId = $matches[2];
-                
-                // Only use if we still don't have these values
-                if (!$resourceType) {
-                    $resourceType = $extractedType;
-                }
-                if (!$resourceId) {
-                    $resourceId = $extractedId;
-                }
-                
-                $this->getServiceLocator()->get('Omeka\Logger')->info(sprintf(
-                    'Watermarker: Extracted from URI - type: %s, id: %s',
-                    $extractedType, 
-                    $extractedId
-                ));
-            }
-        }
-        
+        $this->logger->info('Watermarker: Starting assignAction');
+
+        // Get parameters from route and query
+        $resourceType = $this->params()->fromRoute('resource_type');
+        $resourceId = $this->params()->fromRoute('resource_id');
+
+        // Get watermark set ID from POST data
+        $watermarkSetId = $this->params()->fromPost('watermark_set_id');
+
+        $this->logger->info(sprintf(
+            'Watermarker: Request parameters - type: %s, id: %s, set_id: %s',
+            $resourceType,
+            $resourceId,
+            $watermarkSetId
+        ));
+
         // Validate resource type
-        if (!in_array($resourceType, ['item', 'item-set'])) {
-            $this->messenger()->addError('Invalid resource type.');
-            return $this->redirect()->toRoute('admin');
-        }
-        
-        // Validate resource exists
-        $services = $this->getEvent()->getApplication()->getServiceManager();
-        $api = $services->get('Omeka\ApiManager');
-        
-        try {
-            $resource = $api->read($resourceType, $resourceId)->getContent();
-        } catch (\Exception $e) {
-            $this->messenger()->addError(sprintf('%s not found.', ucfirst(str_replace('-', ' ', $resourceType))));
-            return $this->redirect()->toRoute('admin');
-        }
-        
-        // Get available watermark sets
-        $connection = $services->get('Omeka\Connection');
-        $sql = "SELECT * FROM watermark_set WHERE enabled = 1 ORDER BY is_default DESC, name ASC";
-        $stmt = $connection->query($sql);
-        $watermarkSets = $stmt->fetchAll();
-        
-        if (count($watermarkSets) == 0) {
-            $this->messenger()->addWarning('No enabled watermark sets found. Please create and enable a watermark set first.');
+        if (!in_array($resourceType, ['item-set', 'item'])) {
+            $this->logger->err(sprintf('Watermarker: Invalid resource type: %s', $resourceType));
+            if ($this->getRequest()->isXmlHttpRequest()) {
+                return $this->jsonResponse(['error' => 'Invalid resource type']);
+            }
+            $this->flashMessenger()->addErrorMessage('Invalid resource type');
             return $this->redirect()->toRoute('admin/watermarker');
         }
-        
-        // Get current assignment
-        $sql = "SELECT * FROM watermark_assignment 
-                WHERE resource_id = :resource_id AND resource_type = :resource_type";
-        $stmt = $connection->prepare($sql);
-        $stmt->bindValue('resource_id', $resourceId);
-        $stmt->bindValue('resource_type', $resourceType);
-        $stmt->execute();
-        $assignment = $stmt->fetch();
-        
-        // Create form
-        $form = $this->getForm(\Watermarker\Form\WatermarkAssignmentForm::class);
-        $form->setWatermarkSets($watermarkSets);
-        
-        // Set form data
-        $formData = [
-            'resource_id' => $resourceId,
-            'resource_type' => $resourceType,
-        ];
-        
-        if ($assignment) {
-            $formData['watermark_set_id'] = $assignment['watermark_set_id'] === null ? 'none' : $assignment['watermark_set_id'];
-        }
-        
-        $form->setData($formData);
-        
-        if ($this->getRequest()->isPost()) {
-            $data = $this->params()->fromPost();
-            $form->setData($data);
-            
-            if ($form->isValid()) {
-                $formData = $form->getData();
-                
-                // Handle the special 'none' case
-                $watermarkSetId = $formData['watermark_set_id'];
-                if ($watermarkSetId === 'none') {
-                    $watermarkSetId = null;
-                } else if (empty($watermarkSetId)) {
-                    // Empty means use default - delete any existing assignment
-                    $sql = "DELETE FROM watermark_assignment 
-                            WHERE resource_id = :resource_id AND resource_type = :resource_type";
-                    $stmt = $connection->prepare($sql);
-                    $stmt->bindValue('resource_id', $resourceId);
-                    $stmt->bindValue('resource_type', $resourceType);
-                    $stmt->execute();
-                    
-                    $this->messenger()->addSuccess(sprintf(
-                        'Watermark assignment cleared. Default watermark settings will be used for this %s.',
-                        str_replace('-', ' ', $resourceType)
-                    ));
-                    
-                    // Redirect back to the resource
-                    $redirectUrl = $resource->url();
-                    return $this->redirect()->toUrl($redirectUrl);
-                }
-                
-                // Insert or update the assignment
-                if ($assignment) {
-                    $sql = "UPDATE watermark_assignment 
-                            SET watermark_set_id = :watermark_set_id, modified = :modified 
-                            WHERE resource_id = :resource_id AND resource_type = :resource_type";
-                } else {
-                    $sql = "INSERT INTO watermark_assignment 
-                            (resource_id, resource_type, watermark_set_id, created) 
-                            VALUES (:resource_id, :resource_type, :watermark_set_id, :modified)";
-                }
-                
-                $stmt = $connection->prepare($sql);
-                $stmt->bindValue('resource_id', $resourceId);
-                $stmt->bindValue('resource_type', $resourceType);
-                $stmt->bindValue('watermark_set_id', $watermarkSetId);
-                $stmt->bindValue('modified', date('Y-m-d H:i:s'));
-                $stmt->execute();
-                
-                if ($watermarkSetId === null) {
-                    $message = sprintf('Watermarking disabled for this %s.', str_replace('-', ' ', $resourceType));
-                } else {
-                    // Get the set name
-                    $setName = 'Unknown';
-                    foreach ($watermarkSets as $set) {
-                        if ($set['id'] == $watermarkSetId) {
-                            $setName = $set['name'];
-                            break;
-                        }
-                    }
-                    
-                    $message = sprintf(
-                        'Watermark set "%s" assigned to this %s.',
-                        $setName,
-                        str_replace('-', ' ', $resourceType)
-                    );
-                }
-                
-                $this->messenger()->addSuccess($message);
-                
-                // Redirect back to the resource
-                $redirectUrl = $resource->url();
-                return $this->redirect()->toUrl($redirectUrl);
-            } else {
-                $this->messenger()->addFormErrors($form);
+
+        // Get the resource
+        try {
+            // Convert resource type to API endpoint name
+            $apiEndpoint = $resourceType === 'item-set' ? 'item_sets' : 'items';
+            $resource = $this->api->read($apiEndpoint, $resourceId)->getContent();
+        } catch (\Exception $e) {
+            $this->logger->err(sprintf(
+                'Watermarker: Resource not found - type: %s, id: %s, error: %s',
+                $resourceType,
+                $resourceId,
+                $e->getMessage()
+            ));
+            if ($this->getRequest()->isXmlHttpRequest()) {
+                return $this->jsonResponse(['error' => 'Resource not found']);
             }
+            $this->flashMessenger()->addErrorMessage('Resource not found');
+            return $this->redirect()->toRoute('admin/watermarker');
         }
-        
-        $view = new ViewModel();
-        $view->setVariable('form', $form);
-        $view->setVariable('resource', $resource);
-        $view->setVariable('resourceType', $resourceType);
-        $view->setVariable('assignment', $assignment);
-        return $view;
+
+        // Handle watermark assignment
+        try {
+            // Handle different watermark set options
+            $explicitlyNoWatermark = false;
+            if (empty($watermarkSetId)) {
+                // "None" selected - set explicitly_no_watermark flag
+                $watermarkSetId = null;
+                $explicitlyNoWatermark = true;
+            } elseif ($watermarkSetId === 'default') {
+                // "Default" selected - use null and no flag
+                $watermarkSetId = null;
+                $explicitlyNoWatermark = false;
+            } else {
+                // Specific watermark set selected - verify it exists
+                $stmt = $this->connection->prepare('SELECT id FROM watermark_set WHERE id = ?');
+                $stmt->execute([$watermarkSetId]);
+                if (!$stmt->fetch()) {
+                    throw new \Exception(sprintf('Watermark set with ID %s not found', $watermarkSetId));
+                }
+                $explicitlyNoWatermark = false;
+            }
+
+            // Check if assignment exists
+            $stmt = $this->connection->prepare('
+                SELECT id FROM watermark_assignment
+                WHERE resource_type = ? AND resource_id = ?
+            ');
+            $stmt->execute([$resourceType, $resourceId]);
+            $existing = $stmt->fetch();
+
+            if ($existing) {
+                // Update existing assignment
+                $stmt = $this->connection->prepare('
+                    UPDATE watermark_assignment
+                    SET watermark_set_id = ?,
+                        explicitly_no_watermark = ?,
+                        modified = NOW()
+                    WHERE resource_type = ? AND resource_id = ?
+                ');
+                $stmt->execute([
+                    $watermarkSetId,
+                    $explicitlyNoWatermark ? 1 : 0, // Convert boolean to integer
+                    $resourceType,
+                    $resourceId
+                ]);
+            } else {
+                // Insert new assignment
+                $stmt = $this->connection->prepare('
+                    INSERT INTO watermark_assignment
+                    (resource_type, resource_id, watermark_set_id, explicitly_no_watermark, created, modified)
+                    VALUES (?, ?, ?, ?, NOW(), NOW())
+                ');
+                $stmt->execute([
+                    $resourceType,
+                    $resourceId,
+                    $watermarkSetId,
+                    $explicitlyNoWatermark ? 1 : 0 // Convert boolean to integer
+                ]);
+            }
+
+            $this->logger->info(sprintf(
+                'Watermarker: Successfully assigned watermark set %s to %s %s (explicitly_no_watermark: %s)',
+                $watermarkSetId === null ? ($explicitlyNoWatermark ? 'none' : 'default') : $watermarkSetId,
+                $resourceType,
+                $resourceId,
+                $explicitlyNoWatermark ? 'true' : 'false'
+            ));
+
+            if ($this->getRequest()->isXmlHttpRequest()) {
+                return $this->jsonResponse(['success' => true]);
+            }
+            $this->flashMessenger()->addSuccessMessage('Watermark settings saved successfully');
+        } catch (\Exception $e) {
+            $this->logger->err(sprintf(
+                'Watermarker: Error saving watermark assignment - %s, SQL State: %s',
+                $e->getMessage(),
+                $e->getCode()
+            ));
+            if ($this->getRequest()->isXmlHttpRequest()) {
+                return $this->jsonResponse(['error' => 'Failed to save watermark settings: ' . $e->getMessage()]);
+            }
+            $this->flashMessenger()->addErrorMessage('Failed to save watermark settings: ' . $e->getMessage());
+        }
+
+        return $this->redirect()->toRoute('admin/watermarker');
     }
 
     /**
@@ -808,7 +768,7 @@ class IndexController extends AbstractActionController
 
         return $this->redirect()->toRoute('admin/watermarker');
     }
-    
+
     /**
      * Get watermark info for a resource
      * This action returns JSON data about a resource's watermark assignment
@@ -817,58 +777,106 @@ class IndexController extends AbstractActionController
     {
         $resourceType = $this->params()->fromRoute('resource-type');
         $resourceId = $this->params()->fromRoute('resource-id');
-        
+
         // Validate parameters
         if (!in_array($resourceType, ['item', 'item-set']) || !$resourceId) {
             return $this->jsonError('Invalid resource type or ID');
         }
-        
+
         $services = $this->getEvent()->getApplication()->getServiceManager();
         $connection = $services->get('Omeka\Connection');
-        
+
+        // Debug: Get all watermark assignments for this resource type
+        $debugAssignments = $connection->query("
+            SELECT * FROM watermark_assignment
+            WHERE resource_type = '$resourceType'
+        ")->fetchAll();
+
+        // Debug: Get all watermark sets
+        $debugSets = $connection->query("
+            SELECT * FROM watermark_set
+        ")->fetchAll();
+
         // Check if this resource has a watermark assignment
-        $sql = "SELECT * FROM watermark_assignment 
-                WHERE resource_id = :resource_id AND resource_type = :resource_type";
+        $sql = "SELECT wa.*, ws.name as set_name
+                FROM watermark_assignment wa
+                LEFT JOIN watermark_set ws ON wa.watermark_set_id = ws.id
+                WHERE wa.resource_id = :resource_id AND wa.resource_type = :resource_type";
         $stmt = $connection->prepare($sql);
         $stmt->bindValue('resource_id', $resourceId);
         $stmt->bindValue('resource_type', $resourceType);
         $stmt->execute();
         $assignment = $stmt->fetch();
-        
+
+        // Debug: Get the raw query result
+        $debugQuery = $connection->query("
+            SELECT wa.*, ws.name as set_name
+            FROM watermark_assignment wa
+            LEFT JOIN watermark_set ws ON wa.watermark_set_id = ws.id
+            WHERE wa.resource_id = '$resourceId' AND wa.resource_type = '$resourceType'
+        ")->fetchAll();
+
         // Get watermark set info if assigned
         $watermarkInfo = null;
-        if ($assignment && $assignment['watermark_set_id']) {
-            $sql = "SELECT name FROM watermark_set WHERE id = :id";
-            $stmt = $connection->prepare($sql);
-            $stmt->bindValue('id', $assignment['watermark_set_id']);
-            $stmt->execute();
-            $setInfo = $stmt->fetch();
-            
-            if ($setInfo) {
-                $watermarkInfo = sprintf('Using watermark set: "%s"', $setInfo['name']);
+        $watermarkSetId = null;
+        $explicitlyNoWatermark = false;
+        $selectedValue = 'default'; // Default value for the dropdown
+
+        if ($assignment) {
+            $watermarkSetId = $assignment['watermark_set_id'];
+            $explicitlyNoWatermark = (bool)$assignment['explicitly_no_watermark'];
+
+            if ($explicitlyNoWatermark) {
+                $watermarkInfo = 'No watermark (explicitly disabled)';
+                $selectedValue = ''; // Empty string for "None"
+            } elseif ($watermarkSetId === null) {
+                $watermarkInfo = 'Using default watermark settings';
+                $selectedValue = 'default';
+            } else {
+                $watermarkInfo = sprintf('Using watermark set: "%s"', $assignment['set_name']);
+                $selectedValue = (string)$watermarkSetId; // Convert to string for the dropdown
             }
-        } else if ($assignment && $assignment['watermark_set_id'] === null) {
-            $watermarkInfo = $resourceType === 'item' 
-                ? 'Watermarking disabled for this item' 
-                : 'Watermarking disabled for this item set and its items';
         } else {
             $watermarkInfo = 'Using default watermark settings';
+            $selectedValue = 'default';
         }
-        
-        // Prepare JSON response
+
+        // Prepare JSON response with extensive debug information
         $response = $this->getResponse();
         $response->getHeaders()->addHeaderLine('Content-Type', 'application/json');
         $response->setContent(json_encode([
             'resource_id' => $resourceId,
             'resource_type' => $resourceType,
-            'watermark_set_id' => $assignment ? $assignment['watermark_set_id'] : null,
+            'watermark_set_id' => $watermarkSetId,
+            'explicitly_no_watermark' => $explicitlyNoWatermark,
             'status' => $watermarkInfo,
+            'selected_value' => $selectedValue,
+            'debug' => [
+                'raw_assignment' => $assignment,
+                'watermark_set_id' => $watermarkSetId,
+                'explicitly_no_watermark' => $explicitlyNoWatermark,
+                'selected_value' => $selectedValue,
+                'sql' => $sql,
+                'params' => [
+                    'resource_id' => $resourceId,
+                    'resource_type' => $resourceType
+                ],
+                'all_assignments' => $debugAssignments,
+                'all_sets' => $debugSets,
+                'query_result' => $debugQuery,
+                'processed_values' => [
+                    'watermark_set_id' => $watermarkSetId,
+                    'explicitly_no_watermark' => $explicitlyNoWatermark,
+                    'selected_value' => $selectedValue,
+                    'watermark_info' => $watermarkInfo
+                ]
+            ],
             'success' => true
         ]));
-        
+
         return $response;
     }
-    
+
     /**
      * Helper to return a JSON error response
      */
@@ -881,7 +889,18 @@ class IndexController extends AbstractActionController
             'error' => $message,
             'success' => false
         ]));
-        
+
+        return $response;
+    }
+
+    /**
+     * Helper method to create JSON responses
+     */
+    private function jsonResponse($data)
+    {
+        $response = $this->getResponse();
+        $response->getHeaders()->addHeaderLine('Content-Type', 'application/json');
+        $response->setContent(json_encode($data));
         return $response;
     }
 }

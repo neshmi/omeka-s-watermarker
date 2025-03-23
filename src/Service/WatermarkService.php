@@ -102,10 +102,10 @@ class WatermarkService
         if (!$this->isWatermarkable($media)) {
             return false;
         }
-        
+
         // Check if this media is part of an item with a specific watermark assignment
         $resourceSetId = $this->getWatermarkSetForResource($media);
-        
+
         // Get the appropriate watermark
         $watermark = $this->getWatermarkForMedia($media, $resourceSetId);
         if (!$watermark) {
@@ -170,115 +170,135 @@ class WatermarkService
         // Apply watermark directly to derivatives
         return $this->applyWatermarkDirectly($media, $watermark);
     }
-    
+
     /**
      * Get the watermark set assigned to a specific media or its parent
-     * 
+     *
      * @param MediaRepresentation $media
      * @return int|null ID of the watermark set to use, or null for default
      */
     protected function getWatermarkSetForResource(MediaRepresentation $media)
     {
-        // Get the item this media belongs to
-        $item = $media->item();
-        if (!$item) {
-            $this->logger->info(sprintf(
-                'Media ID %s has no parent item, using default watermark set',
-                $media->id()
-            ));
-            return null;
-        }
-        
-        $itemId = $item->id();
-        
-        // Check if there's a direct assignment for this item
-        $sql = "SELECT watermark_set_id FROM watermark_assignment 
-                WHERE resource_id = :item_id AND resource_type = 'item'";
-                
-        $stmt = $this->connection->prepare($sql);
-        $stmt->bindValue('item_id', $itemId);
-        $stmt->execute();
-        
-        $setId = $stmt->fetchColumn();
-        
-        // If we found a direct assignment (even if it's NULL = no watermark)
-        if ($setId !== false) {
-            if ($setId === null) {
-                $this->logger->info(sprintf(
-                    'Item ID %s is explicitly set to have no watermark',
-                    $itemId
-                ));
-                return null;
-            }
-            
-            $this->logger->info(sprintf(
-                'Item ID %s has watermark set ID: %d',
-                $itemId,
-                $setId
-            ));
-            return $setId;
-        }
-        
-        // If no direct assignment, check if the item is part of an item set with an assignment
-        $api = $this->serviceLocator->get('Omeka\ApiManager');
-        
+        $this->logger->info(sprintf(
+            'Watermarker: Getting watermark set for %s %s',
+            'item',
+            $media->id()
+        ));
+
         try {
-            // Get item sets this item belongs to
-            $itemSets = $item->itemSets();
-            
-            if (empty($itemSets)) {
+            // Check for direct assignment
+            $stmt = $this->connection->prepare('
+                SELECT watermark_set_id, explicitly_no_watermark
+                FROM watermark_assignment
+                WHERE resource_type = ? AND resource_id = ?
+            ');
+            $stmt->execute(['item', $media->item()->id()]);
+            $result = $stmt->fetch();
+
+            if ($result) {
+                if ($result['explicitly_no_watermark']) {
+                    $this->logger->info(sprintf(
+                        'Watermarker: Found explicit no-watermark setting for item %s',
+                        $media->id()
+                    ));
+                    return false; // Explicitly no watermark
+                }
+                if ($result['watermark_set_id'] === null) {
+                    $this->logger->info(sprintf(
+                        'Watermarker: Found default watermark setting for item %s',
+                        $media->id()
+                    ));
+                    return null; // Use default watermark
+                }
                 $this->logger->info(sprintf(
-                    'Item ID %s does not belong to any item sets, using default watermark set',
-                    $itemId
+                    'Watermarker: Found specific watermark set %s for item %s',
+                    $result['watermark_set_id'],
+                    $media->id()
                 ));
-                return null;
+                return $result['watermark_set_id'];
             }
-            
-            // Check each item set for a watermark assignment
-            foreach ($itemSets as $itemSet) {
-                $itemSetId = $itemSet->id();
-                
-                $sql = "SELECT watermark_set_id FROM watermark_assignment 
-                        WHERE resource_id = :item_set_id AND resource_type = 'item-set'";
-                        
-                $stmt = $this->connection->prepare($sql);
-                $stmt->bindValue('item_set_id', $itemSetId);
-                $stmt->execute();
-                
-                $setId = $stmt->fetchColumn();
-                
-                if ($setId !== false) {
-                    if ($setId === null) {
-                        $this->logger->info(sprintf(
-                            'Item ID %s is in item set %d which is explicitly set to have no watermark',
-                            $itemId,
-                            $itemSetId
+
+            // If no direct assignment, check item sets for items
+            if ($media->item()) {
+                try {
+                    $item = $this->api->read('items', $media->item()->id())->getContent();
+                    if (!$item) {
+                        $this->logger->warn(sprintf(
+                            'Watermarker: Media item %s has no parent item',
+                            $media->id()
                         ));
                         return null;
                     }
-                    
-                    $this->logger->info(sprintf(
-                        'Item ID %s is in item set %d with watermark set ID: %d',
-                        $itemId,
-                        $itemSetId,
-                        $setId
+
+                    // Check if item belongs to any item sets
+                    $itemSets = $item->itemSets();
+                    if (empty($itemSets)) {
+                        $this->logger->info(sprintf(
+                            'Watermarker: Item %s belongs to no item sets, using default watermark',
+                            $media->id()
+                        ));
+                        return null;
+                    }
+
+                    // Check each item set for watermark assignments
+                    foreach ($itemSets as $itemSet) {
+                        $stmt = $this->connection->prepare('
+                            SELECT watermark_set_id, explicitly_no_watermark
+                            FROM watermark_assignment
+                            WHERE resource_type = ? AND resource_id = ?
+                        ');
+                        $stmt->execute(['item-set', $itemSet->id()]);
+                        $result = $stmt->fetch();
+
+                        if ($result) {
+                            if ($result['explicitly_no_watermark']) {
+                                $this->logger->info(sprintf(
+                                    'Watermarker: Found explicit no-watermark setting in item set %s for item %s',
+                                    $itemSet->id(),
+                                    $media->id()
+                                ));
+                                return false; // Explicitly no watermark
+                            }
+                            if ($result['watermark_set_id'] === null) {
+                                $this->logger->info(sprintf(
+                                    'Watermarker: Found default watermark setting in item set %s for item %s',
+                                    $itemSet->id(),
+                                    $media->id()
+                                ));
+                                return null; // Use default watermark
+                            }
+                            $this->logger->info(sprintf(
+                                'Watermarker: Found specific watermark set %s in item set %s for item %s',
+                                $result['watermark_set_id'],
+                                $itemSet->id(),
+                                $media->id()
+                            ));
+                            return $result['watermark_set_id'];
+                        }
+                    }
+                } catch (\Exception $e) {
+                    $this->logger->err(sprintf(
+                        'Watermarker: Error checking item set watermark assignments for item %s: %s',
+                        $media->id(),
+                        $e->getMessage()
                     ));
-                    return $setId;
                 }
             }
+
+            // No specific assignment found, use default
+            $this->logger->info(sprintf(
+                'Watermarker: No specific watermark assignment found for item %s, using default',
+                $media->id()
+            ));
+            return null;
         } catch (\Exception $e) {
             $this->logger->err(sprintf(
-                'Error checking item sets for item ID %s: %s',
-                $itemId,
+                'Watermarker: Error getting watermark set for item %s: %s',
+                $media->id(),
                 $e->getMessage()
             ));
+            return null;
         }
-        
-        $this->logger->info(sprintf(
-            'No watermark set assigned to item ID %s or its item sets, using default',
-            $itemId
-        ));
-        return null;
     }
 
     /**
@@ -334,7 +354,7 @@ class WatermarkService
             $this->logger->info('Could not determine media orientation, skipping watermark');
             return null;
         }
-        
+
         // If this is a square image but no 'square' type exists, default to the orientation
         // being either landscape (width >= height) or portrait (width < height)
         $imageType = $orientation;
@@ -351,7 +371,7 @@ class WatermarkService
                 }
             }
         }
-        
+
         // Check if there's a specific watermark set assigned to this item or its parent item set
         if ($resourceSetId) {
             $this->logger->info(sprintf('Checking for resource-specific watermark set ID: %d', $resourceSetId));
@@ -361,15 +381,15 @@ class WatermarkService
             }
             // If no matching watermark in resource-specific set, fall back to default set
         }
-        
+
         // If no resource-specific watermark, use the default set
         $this->logger->info('Falling back to default watermark set');
         return $this->getDefaultWatermark($imageType);
     }
-    
+
     /**
      * Get image info including dimensions for a media item
-     * 
+     *
      * @param MediaRepresentation $media
      * @return array|null Array with width, height, or null if dimensions can't be determined
      */
@@ -380,23 +400,23 @@ class WatermarkService
         if (!$filePath) {
             return null;
         }
-        
+
         // Get image dimensions
         $imageSize = @getimagesize($filePath);
         if (!$imageSize) {
             return null;
         }
-        
+
         return [
             'width' => $imageSize[0],
             'height' => $imageSize[1],
             'type' => image_type_to_mime_type($imageSize[2])
         ];
     }
-    
+
     /**
      * Check if a specific watermark type exists in the database
-     * 
+     *
      * @param string $type The watermark type to check for (landscape, portrait, square, all)
      * @return bool True if this type exists in any set, false otherwise
      */
@@ -406,13 +426,13 @@ class WatermarkService
         $stmt = $this->connection->prepare($sql);
         $stmt->bindValue('type', $type);
         $stmt->execute();
-        
+
         return (int)$stmt->fetchColumn() > 0;
     }
-    
+
     /**
      * Get watermark from a specific set for a given image type
-     * 
+     *
      * @param int $setId The watermark set ID
      * @param string $imageType The image type (landscape, portrait, square, all)
      * @return array|null Watermark configuration or null if none applies
@@ -424,24 +444,24 @@ class WatermarkService
         $stmt = $this->connection->prepare($sql);
         $stmt->bindValue('id', $setId);
         $stmt->execute();
-        
+
         $set = $stmt->fetch(\PDO::FETCH_ASSOC);
         if (!$set) {
             $this->logger->info(sprintf('Watermark set ID %d does not exist or is disabled', $setId));
             return null;
         }
-        
+
         // Try to get the specific watermark for this image type
         $sql = "SELECT w.* FROM watermark_setting w
                 WHERE w.set_id = :set_id AND (w.type = :type OR w.type = 'all')
                 ORDER BY CASE WHEN w.type = :type THEN 0 ELSE 1 END
                 LIMIT 1";
-                
+
         $stmt = $this->connection->prepare($sql);
         $stmt->bindValue('set_id', $setId);
         $stmt->bindValue('type', $imageType);
         $stmt->execute();
-        
+
         $watermark = $stmt->fetch(\PDO::FETCH_ASSOC);
         if (!$watermark) {
             $this->logger->info(sprintf(
@@ -451,7 +471,7 @@ class WatermarkService
             ));
             return null;
         }
-        
+
         // Verify the asset exists
         try {
             $assetId = $watermark['media_id'];
@@ -464,7 +484,7 @@ class WatermarkService
                 $imageType,
                 $setId
             ));
-            
+
             return $watermark;
         } catch (\Exception $e) {
             $this->logger->err(sprintf(
@@ -475,10 +495,10 @@ class WatermarkService
             return null;
         }
     }
-    
+
     /**
      * Get the default watermark for a given image type
-     * 
+     *
      * @param string $imageType The image type (landscape, portrait, square, all)
      * @return array|null Watermark configuration or null if none applies
      */
@@ -487,19 +507,19 @@ class WatermarkService
         // Find the default watermark set
         $sql = "SELECT id FROM watermark_set WHERE is_default = 1 AND enabled = 1 LIMIT 1";
         $defaultSetId = $this->connection->fetchColumn($sql);
-        
+
         if (!$defaultSetId) {
             $this->logger->info('No default watermark set found, looking for any enabled set');
             // If no default set, try any enabled set
             $sql = "SELECT id FROM watermark_set WHERE enabled = 1 LIMIT 1";
             $defaultSetId = $this->connection->fetchColumn($sql);
-            
+
             if (!$defaultSetId) {
                 $this->logger->info('No enabled watermark sets found');
                 return null;
             }
         }
-        
+
         $this->logger->info(sprintf('Using default watermark set ID: %d', $defaultSetId));
         return $this->getWatermarkFromSet($defaultSetId, $imageType);
     }
@@ -556,13 +576,13 @@ class WatermarkService
         // Consider an image 'square' if width and height are within 5% of each other
         $tolerance = 0.05; // 5% tolerance
         $aspectRatio = $width / $height;
-        
+
         if (abs($aspectRatio - 1) <= $tolerance) {
             $orientation = 'square';
         } else {
             $orientation = ($width >= $height) ? 'landscape' : 'portrait';
         }
-        
+
         $this->logger->info(sprintf(
             'Media ID %s orientation: %s (%dx%d, ratio: %.2f)',
             $media->id(),
@@ -1433,7 +1453,7 @@ class WatermarkService
             $this->logger->err(sprintf('Watermarker: Directory %s is not writable', $dir));
             // Try to create a temp file in the system temp directory first, with proper extension
             $tempFile = tempnam(sys_get_temp_dir(), 'wm_');
-            
+
             // Add the file extension based on the detected MIME type
             $fileExt = $this->getExtensionForMimeType($detectedMimeType);
             if (!empty($fileExt)) {
@@ -1442,7 +1462,7 @@ class WatermarkService
                 $tempFile = $tempFileWithExt;
                 $this->logger->info(sprintf('Watermarker: Added extension to temp file: %s', $fileExt));
             }
-            
+
             $this->logger->info(sprintf('Watermarker: Using temporary file %s instead', $tempFile));
             $file = $tempFile;
         }
@@ -1451,7 +1471,7 @@ class WatermarkService
         // 1. First save to a temporary file
         $tempDir = sys_get_temp_dir();
         $tempOutput = tempnam($tempDir, 'wm_output_');
-        
+
         // Add the file extension based on the detected MIME type
         $fileExt = $this->getExtensionForMimeType($detectedMimeType);
         if (!empty($fileExt)) {
@@ -1851,5 +1871,35 @@ class WatermarkService
                 (int)($opacity * 100)
             );
         }
+    }
+
+    /**
+     * Get all available watermark sets
+     *
+     * @return array Array of watermark sets with their IDs and names
+     */
+    public function getAllWatermarkSets()
+    {
+        $sql = "SELECT id, name, is_default FROM watermark_set WHERE enabled = 1 ORDER BY is_default DESC, name ASC";
+        $stmt = $this->connection->query($sql);
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
+    }
+
+    /**
+     * Get watermark assignment for a resource
+     *
+     * @param int $resourceId The resource ID
+     * @param string $resourceType The resource type (item or item-set)
+     * @return array|null Assignment data or null if not found
+     */
+    public function getWatermarkAssignment($resourceId, $resourceType)
+    {
+        $sql = "SELECT * FROM watermark_assignment
+                WHERE resource_id = :resource_id AND resource_type = :resource_type";
+        $stmt = $this->connection->prepare($sql);
+        $stmt->bindValue('resource_id', $resourceId);
+        $stmt->bindValue('resource_type', $resourceType);
+        $stmt->execute();
+        return $stmt->fetch(\PDO::FETCH_ASSOC);
     }
 }
