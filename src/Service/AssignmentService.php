@@ -7,6 +7,8 @@ use Omeka\Api\Manager as ApiManager;
 use Watermarker\Entity\WatermarkAssignment;
 use Watermarker\Entity\WatermarkSet;
 use Laminas\ServiceManager\ServiceLocatorInterface;
+use Psr\Log\LoggerInterface as PsrLoggerInterface;
+use Interop\Container\ContainerInterface;
 
 /**
  * Service for managing watermark assignments to resources
@@ -21,7 +23,7 @@ class AssignmentService
     /**
      * @var ApiManager
      */
-    protected $apiManager;
+    protected $api;
 
     /**
      * @var LoggerInterface
@@ -37,14 +39,18 @@ class AssignmentService
      * Constructor
      *
      * @param EntityManager $entityManager
-     * @param ApiManager $apiManager
+     * @param ApiManager $api
      * @param LoggerInterface $logger
      * @param ServiceLocatorInterface $serviceLocator
      */
-    public function __construct(EntityManager $entityManager, ApiManager $apiManager, LoggerInterface $logger, ServiceLocatorInterface $serviceLocator)
-    {
+    public function __construct(
+        EntityManager $entityManager,
+        ApiManager $api,
+        LoggerInterface $logger,
+        ContainerInterface $serviceLocator
+    ) {
         $this->entityManager = $entityManager;
-        $this->apiManager = $apiManager;
+        $this->api = $api;
         $this->logger = $logger;
         $this->serviceLocator = $serviceLocator;
     }
@@ -134,62 +140,194 @@ class AssignmentService
     }
 
     /**
-     * Create or update a watermark assignment
+     * Set a watermark assignment for a resource
      *
-     * @param string $resourceType
-     * @param int $resourceId
-     * @param int|null $watermarkSetId
-     * @param bool $explicitlyNoWatermark
-     * @return \Watermarker\Api\Representation\WatermarkAssignmentRepresentation|null
+     * @param string $resourceType Item, item-set, or media
+     * @param int $resourceId The ID of the resource
+     * @param int|null $watermarkSetId Watermark set ID or null to use default
+     * @param bool $explicitlyNoWatermark If true, no watermark will be applied
+     * @return bool|null True on success, false on failure, null if no changes
      */
     public function setAssignment($resourceType, $resourceId, $watermarkSetId = null, $explicitlyNoWatermark = false)
     {
-        // Convert resource type to API format
-        $apiResourceType = $this->normalizeResourceType($resourceType);
+        // Map resource types to API names
+        $resourceTypeMap = [
+            'item' => 'items',
+            'item-set' => 'item_sets',
+            'media' => 'media',
+            // Allow direct API names too
+            'items' => 'items',
+            'item_sets' => 'item_sets',
+        ];
 
-        // First check if an assignment exists
-        $existingAssignment = $this->getAssignment($resourceType, $resourceId);
+        if (!isset($resourceTypeMap[$resourceType])) {
+            $this->logger->err("Invalid resource type: {$resourceType}");
+            throw new \InvalidArgumentException("Invalid resource type");
+        }
 
-        // Prepare assignment data
-        $data = [
+        $apiResourceType = $resourceTypeMap[$resourceType];
+
+        // Check if resource exists
+        try {
+            $this->api->read($apiResourceType, $resourceId);
+        } catch (\Exception $e) {
+            $this->logger->err("Resource not found: {$apiResourceType} {$resourceId}");
+            throw new \InvalidArgumentException("Resource not found");
+        }
+
+        // Handle explicitly no watermark with set ID
+        if ($explicitlyNoWatermark && $watermarkSetId) {
+            $watermarkSetId = null;
+        }
+
+        // Check watermark set exists if set
+        if ($watermarkSetId) {
+            try {
+                $watermarkSet = $this->api->read('watermark_sets', $watermarkSetId)->getContent();
+                if (!$watermarkSet->enabled()) {
+                    $this->logger->err("Watermark set is disabled: {$watermarkSetId}");
+                    throw new \InvalidArgumentException("Watermark set is disabled");
+                }
+            } catch (\Exception $e) {
+                $this->logger->err("Watermark set not found: {$watermarkSetId}");
+                throw new \InvalidArgumentException("Watermark set not found");
+            }
+        }
+
+        // Find existing assignment
+        $assignments = $this->api->search('watermark_assignments', [
+            'resource_type' => $apiResourceType,
+            'resource_id' => $resourceId,
+        ])->getContent();
+
+        // If removing to default and no assignment exists
+        if (!$watermarkSetId && !$explicitlyNoWatermark && count($assignments) === 0) {
+            return null; // No changes needed
+        }
+
+        // If no assignment, no watermark set, and not explicitly no watermark
+        if (count($assignments) === 0 && !$watermarkSetId && !$explicitlyNoWatermark) {
+            return null; // No changes needed
+        }
+
+        // If removing to default and assignment exists
+        if (!$watermarkSetId && !$explicitlyNoWatermark && count($assignments) > 0) {
+            $assignment = $assignments[0];
+            try {
+                $this->api->delete('watermark_assignments', $assignment->id());
+                return true;
+            } catch (\Exception $e) {
+                $this->logger->err("Failed to delete assignment: " . $e->getMessage());
+                return false;
+            }
+        }
+
+        // Create or update assignment
+        $assignmentData = [
             'o:resource_type' => $apiResourceType,
             'o:resource_id' => $resourceId,
-            'o:explicitly_no_watermark' => $explicitlyNoWatermark,
+            'o:explicitly_no_watermark' => (bool) $explicitlyNoWatermark,
         ];
 
         if ($watermarkSetId) {
-            $data['o:watermark_set'] = ['o:id' => $watermarkSetId];
+            $assignmentData['o:watermark_set'] = $watermarkSetId;
         }
 
-        // Update or create the assignment
         try {
-            if ($existingAssignment) {
-                // For update or remove
-                if (!$watermarkSetId && !$explicitlyNoWatermark) {
-                    // Remove assignment
-                    $this->api()->delete('watermark_assignments', $existingAssignment->id());
-                    return null;
-                } else {
-                    // Update assignment
-                    $response = $this->api()->update(
-                        'watermark_assignments',
-                        $existingAssignment->id(),
-                        $data
-                    );
-                    return $response->getContent();
-                }
+            if (count($assignments) > 0) {
+                $assignment = $assignments[0];
+                $this->api->update('watermark_assignments', $assignment->id(), $assignmentData);
             } else {
-                // No need to create an assignment to use default
-                if (!$watermarkSetId && !$explicitlyNoWatermark) {
+                $this->api->create('watermark_assignments', $assignmentData);
+            }
+            return true;
+        } catch (\Exception $e) {
+            $this->logger->err("Failed to save assignment: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Get the applicable watermark set for a resource
+     *
+     * @param string $resourceType
+     * @param int $resourceId
+     * @return \Watermarker\Api\Representation\WatermarkSetRepresentation|null
+     */
+    public function getWatermarkSet($resourceType, $resourceId)
+    {
+        // Map resource types to API names
+        $resourceTypeMap = [
+            'item' => 'items',
+            'item-set' => 'item_sets',
+            'media' => 'media',
+            // Allow direct API names too
+            'items' => 'items',
+            'item_sets' => 'item_sets',
+        ];
+
+        if (!isset($resourceTypeMap[$resourceType])) {
+            $this->logger->err("Invalid resource type: {$resourceType}");
+            return null;
+        }
+
+        $apiResourceType = $resourceTypeMap[$resourceType];
+
+        try {
+            // Check for direct assignment to this resource
+            $assignments = $this->api->search('watermark_assignments', [
+                'resource_type' => $apiResourceType,
+                'resource_id' => $resourceId,
+            ])->getContent();
+
+            if (count($assignments) > 0) {
+                $assignment = $assignments[0];
+
+                // If explicitly no watermark, return null
+                if ($assignment->explicitlyNoWatermark()) {
                     return null;
                 }
 
-                // Create new assignment
-                $response = $this->api()->create('watermark_assignments', $data);
-                return $response->getContent();
+                // If has watermark set, return it
+                if ($assignment->watermarkSet()) {
+                    return $assignment->watermarkSet();
+                }
             }
+
+            // For media, check parent item
+            if ($apiResourceType === 'media') {
+                $media = $this->api->read('media', $resourceId)->getContent();
+                $itemId = $media->item()->id();
+                return $this->getWatermarkSet('item', $itemId);
+            }
+
+            // For item, check parent item set
+            if ($apiResourceType === 'items') {
+                $item = $this->api->read('items', $resourceId)->getContent();
+                $itemSets = $item->itemSets();
+
+                // Check each item set, use first that has a watermark
+                foreach ($itemSets as $itemSet) {
+                    $watermarkSet = $this->getWatermarkSet('item_sets', $itemSet->id());
+                    if ($watermarkSet) {
+                        return $watermarkSet;
+                    }
+                }
+            }
+
+            // If no assignment found, use default
+            $defaultSets = $this->api->search('watermark_sets', [
+                'is_default' => true,
+                'enabled' => true,
+            ])->getContent();
+
+            if (count($defaultSets) > 0) {
+                return $defaultSets[0];
+            }
+
+            return null;
         } catch (\Exception $e) {
-            error_log('Error setting watermark assignment: ' . $e->getMessage());
+            $this->logger->err("Error getting watermark set: " . $e->getMessage());
             return null;
         }
     }

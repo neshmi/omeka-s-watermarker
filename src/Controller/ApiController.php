@@ -7,8 +7,19 @@ use Omeka\Stdlib\ErrorStore;
 
 class ApiController extends AbstractActionController
 {
+    protected $entityManager;
+    protected $api;
+    protected $assignmentService;
+
+    public function __construct($entityManager, $api, $assignmentService)
+    {
+        $this->entityManager = $entityManager;
+        $this->api = $api;
+        $this->assignmentService = $assignmentService;
+    }
+
     /**
-     * Get watermark assignment for a resource
+     * Get assignment data for a resource
      */
     public function getAssignmentAction()
     {
@@ -16,88 +27,81 @@ class ApiController extends AbstractActionController
         $resourceId = $this->params()->fromQuery('resource_id');
 
         if (!$resourceType || !$resourceId) {
-            return $this->returnError('Missing resource type or ID');
+            return new JsonModel([
+                'status' => 'error',
+                'message' => 'Missing resource information'
+            ]);
         }
 
-        // Map resource types to API endpoint names
-        $resourceTypeMap = [
-            'item' => 'items',
-            'item-set' => 'item_sets',
-            'media' => 'media',
-            // Also allow direct API names
-            'items' => 'items',
-            'item_sets' => 'item_sets',
-        ];
-
-        if (!isset($resourceTypeMap[$resourceType])) {
-            return $this->returnError('Invalid resource type');
+        // Convert resource type
+        $apiResourceType = $resourceType;
+        if ($resourceType === 'item') {
+            $apiResourceType = 'items';
+        } elseif ($resourceType === 'item-set') {
+            $apiResourceType = 'item_sets';
         }
 
-        $apiResourceType = $resourceTypeMap[$resourceType];
-
-        $api = $this->api();
-
-        // First check if the resource exists
         try {
-            $resource = $api->read($apiResourceType, $resourceId)->getContent();
+            // Verify resource exists
+            $this->api->read($apiResourceType, $resourceId);
+
+            // Get assignment
+            $response = $this->api->search('watermark_assignments', [
+                'resource_type' => $apiResourceType,
+                'resource_id' => $resourceId,
+            ]);
+            $assignments = $response->getContent();
+            $assignment = count($assignments) > 0 ? $assignments[0] : null;
+
+            // Get available watermark sets
+            $response = $this->api->search('watermark_sets', ['enabled' => true]);
+            $watermarkSets = $response->getContent();
+            $formattedSets = [];
+            foreach ($watermarkSets as $set) {
+                $formattedSets[] = [
+                    'id' => $set->id(),
+                    'name' => $set->name(),
+                    'is_default' => $set->isDefault()
+                ];
+            }
+
+            // Get default watermark set
+            $response = $this->api->search('watermark_sets', [
+                'is_default' => true,
+                'enabled' => true,
+            ]);
+            $defaultSets = $response->getContent();
+            $defaultSet = count($defaultSets) > 0 ? $defaultSets[0]->getJsonLd() : null;
+
+            // Format data
+            $data = [
+                'assignment' => $assignment ? $assignment->getJsonLd() : null,
+                'watermark_sets' => $formattedSets,
+                'default_set' => $defaultSet,
+            ];
+
+            return new JsonModel([
+                'status' => 'success',
+                'data' => $data
+            ]);
         } catch (\Exception $e) {
-            return $this->returnError('Resource not found');
-        }
-
-        // Find watermark assignment
-        $assignments = $api->search('watermark_assignments', [
-            'resource_type' => $apiResourceType,
-            'resource_id' => $resourceId,
-        ])->getContent();
-
-        if (count($assignments) > 0) {
-            $assignment = $assignments[0];
             return new JsonModel([
-                'success' => true,
-                'assignment' => $assignment->getJsonLd(),
+                'status' => 'error',
+                'message' => $e->getMessage()
             ]);
         }
-
-        // If no direct assignment, get the default
-        $watermarkSets = $api->search('watermark_sets', [
-            'is_default' => true,
-            'enabled' => true,
-        ])->getContent();
-
-        if (count($watermarkSets) > 0) {
-            $defaultSet = $watermarkSets[0];
-            return new JsonModel([
-                'success' => true,
-                'default' => true,
-                'assignment' => [
-                    'o:resource_type' => $apiResourceType,
-                    'o:resource_id' => $resourceId,
-                    'o:watermark_set' => $defaultSet->getReference(),
-                    'o:explicitly_no_watermark' => false,
-                ],
-            ]);
-        }
-
-        // No assignment and no default
-        return new JsonModel([
-            'success' => true,
-            'no_watermark' => true,
-            'assignment' => [
-                'o:resource_type' => $apiResourceType,
-                'o:resource_id' => $resourceId,
-                'o:watermark_set' => null,
-                'o:explicitly_no_watermark' => false,
-            ],
-        ]);
     }
 
     /**
-     * Set watermark assignment for a resource
+     * Set assignment for a resource
      */
     public function setAssignmentAction()
     {
         if (!$this->getRequest()->isPost()) {
-            return $this->returnError('Method not allowed', 405);
+            return new JsonModel([
+                'status' => 'error',
+                'message' => 'Only POST requests are allowed'
+            ]);
         }
 
         $data = $this->params()->fromPost();
@@ -107,137 +111,65 @@ class ApiController extends AbstractActionController
         $explicitlyNoWatermark = (bool) ($data['explicitly_no_watermark'] ?? false);
 
         if (!$resourceType || !$resourceId) {
-            return $this->returnError('Missing resource type or ID');
+            return new JsonModel([
+                'status' => 'error',
+                'message' => 'Missing resource information'
+            ]);
         }
 
-        // Map resource types to API endpoint names
-        $resourceTypeMap = [
-            'item' => 'items',
-            'item-set' => 'item_sets',
-            'media' => 'media',
-            // Also allow direct API names
-            'items' => 'items',
-            'item_sets' => 'item_sets',
-        ];
-
-        if (!isset($resourceTypeMap[$resourceType])) {
-            return $this->returnError('Invalid resource type');
-        }
-
-        $apiResourceType = $resourceTypeMap[$resourceType];
-
-        $api = $this->api();
-
-        // First check if the resource exists
         try {
-            $resource = $api->read($apiResourceType, $resourceId)->getContent();
+            $result = $this->assignmentService->setAssignment(
+                $resourceType,
+                $resourceId,
+                $watermarkSetId,
+                $explicitlyNoWatermark
+            );
+
+            return new JsonModel([
+                'status' => 'success',
+                'data' => [
+                    'resource_type' => $resourceType,
+                    'resource_id' => $resourceId,
+                    'watermark_set_id' => $watermarkSetId,
+                    'explicitly_no_watermark' => $explicitlyNoWatermark,
+                ]
+            ]);
         } catch (\Exception $e) {
-            return $this->returnError('Resource not found');
-        }
-
-        // Check if watermark set exists if provided
-        $watermarkSet = null;
-        if ($watermarkSetId && !$explicitlyNoWatermark) {
-            try {
-                $watermarkSet = $api->read('watermark_sets', $watermarkSetId)->getContent();
-                if (!$watermarkSet->enabled()) {
-                    return $this->returnError('Watermark set is disabled');
-                }
-            } catch (\Exception $e) {
-                return $this->returnError('Watermark set not found');
-            }
-        }
-
-        // Find existing assignment
-        $assignments = $api->search('watermark_assignments', [
-            'resource_type' => $apiResourceType,
-            'resource_id' => $resourceId,
-        ])->getContent();
-
-        $assignmentData = [
-            'o:resource_type' => $apiResourceType,
-            'o:resource_id' => $resourceId,
-        ];
-
-        if ($watermarkSetId && !$explicitlyNoWatermark) {
-            $assignmentData['o:watermark_set'] = ['o:id' => $watermarkSetId];
-            $assignmentData['o:explicitly_no_watermark'] = false;
-        } elseif ($explicitlyNoWatermark) {
-            $assignmentData['o:watermark_set'] = null;
-            $assignmentData['o:explicitly_no_watermark'] = true;
-        } else {
-            // Remove assignment if no watermark set and not explicitly no watermark
-            if (count($assignments) > 0) {
-                $assignment = $assignments[0];
-                $api->delete('watermark_assignments', $assignment->id());
-
-                return new JsonModel([
-                    'success' => true,
-                    'message' => 'Watermark assignment removed',
-                ]);
-            }
-
             return new JsonModel([
-                'success' => true,
-                'message' => 'No changes made',
+                'status' => 'error',
+                'message' => $e->getMessage()
             ]);
-        }
-
-        // Update or create assignment
-        if (count($assignments) > 0) {
-            $assignment = $assignments[0];
-            $response = $api->update('watermark_assignments', $assignment->id(), $assignmentData);
-        } else {
-            $response = $api->create('watermark_assignments', $assignmentData);
-        }
-
-        if ($response) {
-            return new JsonModel([
-                'success' => true,
-                'assignment' => $response->getContent()->getJsonLd(),
-            ]);
-        } else {
-            return $this->returnError('Failed to save assignment');
         }
     }
 
     /**
-     * Get all watermark sets
+     * Get list of watermark sets
      */
     public function getWatermarkSetsAction()
     {
-        $api = $this->api();
-        $enabledOnly = (bool) $this->params()->fromQuery('enabled_only', true);
+        try {
+            // Get watermark sets
+            $response = $this->api->search('watermark_sets', ['enabled' => true]);
+            $watermarkSets = $response->getContent();
+            $formattedSets = [];
 
-        $query = [];
-        if ($enabledOnly) {
-            $query['enabled'] = true;
+            foreach ($watermarkSets as $set) {
+                $formattedSets[] = [
+                    'id' => $set->id(),
+                    'name' => $set->name(),
+                    'is_default' => $set->isDefault()
+                ];
+            }
+
+            return new JsonModel([
+                'status' => 'success',
+                'data' => $formattedSets
+            ]);
+        } catch (\Exception $e) {
+            return new JsonModel([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]);
         }
-
-        $watermarkSets = $api->search('watermark_sets', $query)->getContent();
-
-        $sets = [];
-        foreach ($watermarkSets as $set) {
-            $sets[] = $set->getJsonLd();
-        }
-
-        return new JsonModel([
-            'success' => true,
-            'sets' => $sets,
-        ]);
-    }
-
-    /**
-     * Return an error response
-     */
-    protected function returnError($message, $statusCode = 400)
-    {
-        $response = $this->getResponse();
-        $response->setStatusCode($statusCode);
-
-        return new JsonModel([
-            'success' => false,
-            'error' => $message,
-        ]);
     }
 }

@@ -21,6 +21,16 @@ class WatermarkSetForm extends Form
         ]);
 
         $this->add([
+            'name' => 'csrf',
+            'type' => Element\Csrf::class,
+            'options' => [
+                'csrf_options' => [
+                    'timeout' => 600,
+                ],
+            ],
+        ]);
+
+        $this->add([
             'name' => 'name',
             'type' => Element\Text::class,
             'options' => [
@@ -86,7 +96,22 @@ class WatermarkSetForm extends Form
             'name' => 'enabled',
             'required' => false,
         ]);
-        
+
+        $inputFilter->add([
+            'name' => 'csrf',
+            'required' => true,
+            'validators' => [
+                [
+                    'name' => 'NotEmpty',
+                    'options' => [
+                        'messages' => [
+                            'isEmpty' => 'CSRF token is required.',
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
         // Add submit button
         $this->add([
             'name' => 'submit',

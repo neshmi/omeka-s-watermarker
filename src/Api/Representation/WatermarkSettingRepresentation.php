@@ -13,16 +13,17 @@ class WatermarkSettingRepresentation extends AbstractEntityRepresentation
 
     public function getJsonLd()
     {
-        $watermarkSet = $this->watermarkSet();
-        $media = $this->media();
+        $set = $this->set();
+        $media = $this->watermarkMedia();
 
         $data = [
             'o:id' => $this->id(),
-            'o:set' => $watermarkSet ? $watermarkSet->getReference() : null,
+            'o:set' => $set ? $set->getReference() : null,
             'o:type' => $this->type(),
+            'o:media' => $media ? $media->getReference() : null,
+            'o:media_id' => $this->mediaId(),
             'o:position' => $this->position(),
             'o:opacity' => $this->opacity(),
-            'o:media' => $media ? $media->getReference() : null,
             'o:created' => $this->created(),
             'o:modified' => $this->modified(),
         ];
@@ -35,17 +36,20 @@ class WatermarkSettingRepresentation extends AbstractEntityRepresentation
         return $this->resource->getId();
     }
 
-    public function watermarkSet()
+    public function set()
     {
         $set = $this->resource->getSet();
-        return $set
-            ? $this->getAdapter('watermark_sets')->getRepresentation($set)
-            : null;
+        return $set ? $this->getAdapter('watermark_sets')->getRepresentation($set) : null;
     }
 
     public function type()
     {
         return $this->resource->getType();
+    }
+
+    public function mediaId()
+    {
+        return $this->resource->getMediaId();
     }
 
     public function position()
@@ -58,26 +62,6 @@ class WatermarkSettingRepresentation extends AbstractEntityRepresentation
         return $this->resource->getOpacity();
     }
 
-    public function media()
-    {
-        $mediaId = $this->resource->getMediaId();
-        if (!$mediaId) {
-            return null;
-        }
-
-        try {
-            $api = $this->getServiceLocator()->get('Omeka\ApiManager');
-            return $api->read('media', $mediaId)->getContent();
-        } catch (\Exception $e) {
-            return null;
-        }
-    }
-
-    public function mediaId()
-    {
-        return $this->resource->getMediaId();
-    }
-
     public function created()
     {
         return $this->resource->getCreated();
@@ -86,5 +70,20 @@ class WatermarkSettingRepresentation extends AbstractEntityRepresentation
     public function modified()
     {
         return $this->resource->getModified();
+    }
+
+    public function watermarkMedia()
+    {
+        $mediaId = $this->mediaId();
+        if (!$mediaId) {
+            return null;
+        }
+
+        try {
+            return $this->getServiceLocator()->get('Omeka\ApiManager')
+                ->read('assets', $mediaId)->getContent();
+        } catch (\Exception $e) {
+            return null;
+        }
     }
 }

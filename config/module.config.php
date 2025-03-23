@@ -15,7 +15,7 @@ return [
     ],
     'controllers' => [
         'factories' => [
-            'Watermarker\Controller\Admin\Index' => 'Watermarker\Controller\Admin\IndexControllerFactory',
+            'Watermarker\Controller\Admin\Index' => Controller\Admin\IndexControllerFactory::class,
             'Watermarker\Controller\Admin\Assignment' => Service\Factory\AssignmentControllerFactory::class,
             'Watermarker\Controller\Api' => Service\Factory\ApiControllerFactory::class,
         ],
@@ -46,6 +46,30 @@ return [
                         ],
                         'may_terminate' => true,
                         'child_routes' => [
+                            'config' => [
+                                'type' => 'Literal',
+                                'options' => [
+                                    'route' => '/config',
+                                    'defaults' => [
+                                        '__NAMESPACE__' => 'Watermarker\Controller\Admin',
+                                        'controller' => 'Index',
+                                        'action' => 'config',
+                                    ],
+                                ],
+                                'may_terminate' => true,
+                            ],
+                            'check' => [
+                                'type' => 'Literal',
+                                'options' => [
+                                    'route' => '/check',
+                                    'defaults' => [
+                                        '__NAMESPACE__' => 'Watermarker\Controller\Admin',
+                                        'controller' => 'Index',
+                                        'action' => 'check',
+                                    ],
+                                ],
+                                'may_terminate' => true,
+                            ],
                             'set' => [
                                 'type' => 'Segment',
                                 'options' => [
@@ -71,6 +95,21 @@ return [
                                         'action' => 'addSet',
                                     ],
                                 ],
+                            ],
+                            'editSet' => [
+                                'type' => 'Segment',
+                                'options' => [
+                                    'route' => '/editSet/:id',
+                                    'defaults' => [
+                                        '__NAMESPACE__' => 'Watermarker\Controller\Admin',
+                                        'controller' => 'Index',
+                                        'action' => 'editSet',
+                                    ],
+                                    'constraints' => [
+                                        'id' => '\d+',
+                                    ],
+                                ],
+                                'may_terminate' => true,
                             ],
                             'watermark' => [
                                 'type' => 'Segment',

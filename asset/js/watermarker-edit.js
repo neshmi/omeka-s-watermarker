@@ -125,8 +125,8 @@
             return response.json();
         })
         .then(function(data) {
-            if (data.success) {
-                showStatus(status, data.message || 'Settings saved successfully', 'success');
+            if (data.status === 'success') {
+                showStatus(status, 'Settings saved successfully', 'success');
 
                 // Update the status text based on the selected option
                 setTimeout(function() {
@@ -139,7 +139,7 @@
                     }
                 }, 5000);
             } else {
-                throw new Error(data.error || 'Unknown error');
+                throw new Error(data.message || 'Unknown error');
             }
         })
         .catch(function(error) {

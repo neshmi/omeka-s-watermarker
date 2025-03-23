@@ -419,19 +419,19 @@ class Module extends AbstractModule
         // Listen for watermark assignments
         $sharedEventManager->attach(
             'Omeka\Controller\Admin\Item',
-            'view.edit.form.after',
+            'view.advanced.form.after',
             [$this, 'addWatermarkFormToItem']
         );
 
         $sharedEventManager->attach(
             'Omeka\Controller\Admin\ItemSet',
-            'view.edit.form.after',
+            'view.advanced.form.after',
             [$this, 'addWatermarkFormToItemSet']
         );
 
         $sharedEventManager->attach(
             'Omeka\Controller\Admin\Media',
-            'view.edit.form.after',
+            'view.advanced.form.after',
             [$this, 'addWatermarkFormToMedia']
         );
 
@@ -1821,10 +1821,10 @@ class Module extends AbstractModule
     public function addWatermarkFormToItem(Event $event): void
     {
         $view = $event->getTarget();
-        $item = $view->item;
-        $itemId = $item->id();
+        $item = $view->resource;
+        $resourceId = $item ? $item->id() : null;
 
-        echo $this->getWatermarkFormHtml($view, 'item', $itemId);
+        echo $this->getWatermarkFormHtml($view, 'items', $resourceId);
     }
 
     /**
@@ -1835,10 +1835,10 @@ class Module extends AbstractModule
     public function addWatermarkFormToItemSet(Event $event): void
     {
         $view = $event->getTarget();
-        $itemSet = $view->itemSet;
-        $itemSetId = $itemSet->id();
+        $itemSet = $view->resource;
+        $resourceId = $itemSet ? $itemSet->id() : null;
 
-        echo $this->getWatermarkFormHtml($view, 'item-set', $itemSetId);
+        echo $this->getWatermarkFormHtml($view, 'item_sets', $resourceId);
     }
 
     /**
@@ -1849,10 +1849,10 @@ class Module extends AbstractModule
     public function addWatermarkFormToMedia(Event $event): void
     {
         $view = $event->getTarget();
-        $media = $view->media;
-        $mediaId = $media->id();
+        $media = $view->resource;
+        $resourceId = $media ? $media->id() : null;
 
-        echo $this->getWatermarkFormHtml($view, 'media', $mediaId);
+        echo $this->getWatermarkFormHtml($view, 'media', $resourceId);
     }
 
     /**
@@ -1867,15 +1867,17 @@ class Module extends AbstractModule
     {
         $api = $this->getServiceLocator()->get('Omeka\ApiManager');
         $router = $this->getServiceLocator()->get('Router');
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
 
         // Get watermark sets from API
         $watermarkSets = [];
         try {
             $response = $api->search('watermark_sets', ['enabled' => true]);
             $watermarkSets = $response->getContent();
+            $logger->info('Watermarker: Found ' . count($watermarkSets) . ' watermark sets');
         } catch (\Exception $e) {
             // Log error but continue
-            error_log('Error fetching watermark sets: ' . $e->getMessage());
+            $logger->err('Watermarker: Error fetching watermark sets: ' . $e->getMessage());
         }
 
         // Format watermark sets for JSON
@@ -1902,24 +1904,24 @@ class Module extends AbstractModule
         }
 
         try {
-            $assignments = $api->search('watermark_assignments', [
-                'resource_type' => $apiResourceType,
-                'resource_id' => $resourceId
-            ])->getContent();
-
-            if (count($assignments) > 0) {
-                $currentAssignment = $assignments[0];
-                $isDefault = false;
-
-                if ($currentAssignment->explicitlyNoWatermark()) {
-                    $isExplicitlyNoWatermark = true;
-                    $currentSetId = 'none';
-                } else if ($currentAssignment->watermarkSet()) {
-                    $currentSetId = $currentAssignment->watermarkSet()->id();
-                }
-            }
+            $assignmentService = $this->getServiceLocator()->get('Watermarker\AssignmentService');
+            $assignment = $assignmentService->getAssignment($resourceType, $resourceId);
         } catch (\Exception $e) {
-            error_log('Error fetching watermark assignment: ' . $e->getMessage());
+            // Log error but continue
+            $logger->err('Watermarker: Error fetching watermark assignment: ' . $e->getMessage());
+            return '';
+        }
+
+        if ($assignment !== null) {
+            $currentAssignment = $assignment;
+            $isDefault = false;
+
+            if ($currentAssignment->explicitlyNoWatermark()) {
+                $isExplicitlyNoWatermark = true;
+                $currentSetId = 'none';
+            } else if ($currentAssignment->watermarkSet()) {
+                $currentSetId = $currentAssignment->watermarkSet()->id();
+            }
         }
 
         // Include required JavaScript
@@ -1940,7 +1942,7 @@ class Module extends AbstractModule
         // Add watermark sets to dropdown
         foreach ($watermarkSets as $set) {
             $selected = ($currentSetId == $set->id()) ? ' selected' : '';
-            $html .= '<option value="' . $set->id() . '"' . $selected . '>' . $view->escapeHtml($set->name()) . '</option>';
+            $html .= '<option value="' . $set->id() . '"' . $selected . '>' . $view->escapeHtml($set->name()) . ($set->isDefault() ? ' (' . $view->translate('Default') . ')' : '') . '</option>';
         }
 
         $html .= '</select>';

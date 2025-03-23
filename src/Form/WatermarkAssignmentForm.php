@@ -20,37 +20,28 @@ class WatermarkAssignmentForm extends Form
      */
     public function init()
     {
-        // Add the hidden resource ID
-        $this->add([
-            'name' => 'resource_id',
-            'type' => Element\Hidden::class,
-        ]);
-
-        // Add the hidden resource type
         $this->add([
             'name' => 'resource_type',
             'type' => Element\Hidden::class,
         ]);
 
-        // Create options array for watermark sets
-        $valueOptions = [
-            '' => '[Use default watermark settings]',
-            'none' => '[No watermark]',
-        ];
+        $this->add([
+            'name' => 'resource_id',
+            'type' => Element\Hidden::class,
+        ]);
 
-        // Add watermark sets to options
-        foreach ($this->watermarkSets as $set) {
-            $valueOptions[$set['id']] = $set['name'] . ($set['is_default'] ? ' (Default)' : '');
-        }
+        $this->add([
+            'name' => 'redirect_url',
+            'type' => Element\Hidden::class,
+        ]);
 
-        // Add the watermark set select
         $this->add([
             'name' => 'watermark_set_id',
             'type' => Element\Select::class,
             'options' => [
                 'label' => 'Watermark Set',
-                'info' => 'Select which watermark set to use for this resource. Select "No watermark" to disable watermarking for this resource.',
-                'value_options' => $valueOptions,
+                'value_options' => [],
+                'empty_option' => 'Use default watermark set',
             ],
             'attributes' => [
                 'id' => 'watermark-set-id',
@@ -58,13 +49,20 @@ class WatermarkAssignmentForm extends Form
             ],
         ]);
 
-        // Input filter
-        $inputFilter = $this->getInputFilter();
-
-        $inputFilter->add([
-            'name' => 'resource_id',
-            'required' => true,
+        $this->add([
+            'name' => 'explicitly_no_watermark',
+            'type' => Element\Checkbox::class,
+            'options' => [
+                'label' => 'No Watermark',
+                'info' => 'Check to explicitly prevent watermarking for this resource.',
+            ],
+            'attributes' => [
+                'id' => 'explicitly-no-watermark',
+            ],
         ]);
+
+        // Input filter for validation
+        $inputFilter = $this->getInputFilter();
 
         $inputFilter->add([
             'name' => 'resource_type',
@@ -72,8 +70,28 @@ class WatermarkAssignmentForm extends Form
         ]);
 
         $inputFilter->add([
+            'name' => 'resource_id',
+            'required' => true,
+        ]);
+
+        $inputFilter->add([
             'name' => 'watermark_set_id',
             'required' => false,
+        ]);
+
+        $inputFilter->add([
+            'name' => 'explicitly_no_watermark',
+            'required' => false,
+        ]);
+
+        // Add submit button
+        $this->add([
+            'name' => 'submit',
+            'type' => 'submit',
+            'attributes' => [
+                'value' => 'Save',
+                'class' => 'button',
+            ],
         ]);
     }
 
@@ -86,6 +104,22 @@ class WatermarkAssignmentForm extends Form
     public function setWatermarkSets(array $watermarkSets)
     {
         $this->watermarkSets = $watermarkSets;
+        return $this;
+    }
+
+    /**
+     * Set watermark set options
+     *
+     * @param array $watermarkSets
+     */
+    public function setWatermarkSetOptions(array $watermarkSets)
+    {
+        $options = [];
+        foreach ($watermarkSets as $watermarkSet) {
+            $options[$watermarkSet->id()] = $watermarkSet->name();
+        }
+
+        $this->get('watermark_set_id')->setValueOptions($options);
         return $this;
     }
 }

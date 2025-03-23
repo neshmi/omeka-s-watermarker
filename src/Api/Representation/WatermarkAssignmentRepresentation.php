@@ -14,18 +14,13 @@ class WatermarkAssignmentRepresentation extends AbstractEntityRepresentation
     public function getJsonLd()
     {
         $watermarkSet = $this->watermarkSet();
-        $watermarkSetData = null;
-
-        if ($watermarkSet) {
-            $watermarkSetData = $watermarkSet->getReference();
-        }
 
         $data = [
             'o:id' => $this->id(),
             'o:resource_type' => $this->resourceType(),
             'o:resource_id' => $this->resourceId(),
+            'o:watermark_set' => $watermarkSet ? $watermarkSet->getReference() : null,
             'o:explicitly_no_watermark' => $this->explicitlyNoWatermark(),
-            'o:watermark_set' => $watermarkSetData,
             'o:created' => $this->created(),
             'o:modified' => $this->modified(),
         ];
@@ -50,10 +45,8 @@ class WatermarkAssignmentRepresentation extends AbstractEntityRepresentation
 
     public function watermarkSet()
     {
-        $watermarkSet = $this->resource->getWatermarkSet();
-        return $watermarkSet
-            ? $this->getAdapter('watermark_sets')->getRepresentation($watermarkSet)
-            : null;
+        $set = $this->resource->getWatermarkSet();
+        return $set ? $this->getAdapter('watermark_sets')->getRepresentation($set) : null;
     }
 
     public function explicitlyNoWatermark()
@@ -72,30 +65,30 @@ class WatermarkAssignmentRepresentation extends AbstractEntityRepresentation
     }
 
     /**
-     * Get the resource representation (item, item set, media)
+     * Get the associated resource representation
      *
      * @return AbstractEntityRepresentation|null
      */
     public function resource()
     {
-        $type = $this->resourceType();
-        $id = $this->resourceId();
+        $resourceType = $this->resourceType();
+        $resourceId = $this->resourceId();
 
-        if (!$type || !$id) {
+        if (!$resourceType || !$resourceId) {
             return null;
         }
 
-        $api = $this->getServiceLocator()->get('Omeka\ApiManager');
+        // Convert from "items" to "item" for API
+        $apiResourceType = $resourceType;
+        if (substr($apiResourceType, -1) === 's') {
+            $apiResourceType = substr($apiResourceType, 0, -1);
+        }
 
-        switch ($type) {
-            case 'items':
-                return $api->read('items', $id)->getContent();
-            case 'item_sets':
-                return $api->read('item_sets', $id)->getContent();
-            case 'media':
-                return $api->read('media', $id)->getContent();
-            default:
-                return null;
+        try {
+            return $this->getServiceLocator()->get('Omeka\ApiManager')
+                ->read($apiResourceType, $resourceId)->getContent();
+        } catch (\Exception $e) {
+            return null;
         }
     }
 }

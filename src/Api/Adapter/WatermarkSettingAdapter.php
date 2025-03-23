@@ -38,17 +38,10 @@ class WatermarkSettingAdapter extends AbstractEntityAdapter
 
     public function buildQuery(QueryBuilder $qb, array $query)
     {
-        if (isset($query['watermark_set_id'])) {
+        if (isset($query['set_id'])) {
             $qb->andWhere($qb->expr()->eq(
                 'omeka_root.set',
-                $this->createNamedParameter($qb, $query['watermark_set_id'])
-            ));
-        }
-
-        if (isset($query['media_id'])) {
-            $qb->andWhere($qb->expr()->eq(
-                'omeka_root.mediaId',
-                $this->createNamedParameter($qb, $query['media_id'])
+                $this->createNamedParameter($qb, $query['set_id'])
             ));
         }
 
@@ -59,10 +52,10 @@ class WatermarkSettingAdapter extends AbstractEntityAdapter
             ));
         }
 
-        if (isset($query['position'])) {
+        if (isset($query['media_id'])) {
             $qb->andWhere($qb->expr()->eq(
-                'omeka_root.position',
-                $this->createNamedParameter($qb, $query['position'])
+                'omeka_root.mediaId',
+                $this->createNamedParameter($qb, $query['media_id'])
             ));
         }
     }
@@ -71,26 +64,34 @@ class WatermarkSettingAdapter extends AbstractEntityAdapter
     {
         $data = $request->getContent();
 
-        // Handle watermark set relationship
-        if (isset($data['o:set']['o:id'])) {
-            $set = $this->getAdapter('watermark_sets')->findEntity($data['o:set']['o:id']);
-            $entity->setSet($set);
+        if ($this->shouldHydrate($request, 'o:set')) {
+            $setId = $data['o:set'] ?? null;
+            if ($setId) {
+                $set = $this->getEntityManager()
+                    ->getRepository('Watermarker\Entity\WatermarkSet')
+                    ->find($setId);
+                $entity->setSet($set);
+            }
         }
 
-        if (isset($data['o:type'])) {
+        if ($this->shouldHydrate($request, 'o:type')) {
             $entity->setType($data['o:type']);
         }
 
-        if (isset($data['o:position'])) {
+        if ($this->shouldHydrate($request, 'o:media_id')) {
+            $entity->setMediaId($data['o:media_id']);
+        }
+
+        if ($this->shouldHydrate($request, 'o:position')) {
             $entity->setPosition($data['o:position']);
         }
 
-        if (isset($data['o:opacity'])) {
-            $entity->setOpacity((float) $data['o:opacity']);
+        if ($this->shouldHydrate($request, 'o:opacity')) {
+            $entity->setOpacity($data['o:opacity']);
         }
 
-        if (isset($data['o:media']['o:id'])) {
-            $entity->setMediaId($data['o:media']['o:id']);
+        if ($request->getOperation() === Request::CREATE) {
+            $entity->setCreated(new DateTime('now'));
         }
 
         if ($request->getOperation() === Request::UPDATE) {
@@ -101,23 +102,23 @@ class WatermarkSettingAdapter extends AbstractEntityAdapter
     public function validateEntity(EntityInterface $entity, ErrorStore $errorStore)
     {
         if (!$entity->getSet()) {
-            $errorStore->addError('o:set', 'Watermark set cannot be empty');
+            $errorStore->addError('o:set', 'Watermark setting must belong to a set');
         }
 
         if (!$entity->getType()) {
-            $errorStore->addError('o:type', 'Type cannot be empty');
+            $errorStore->addError('o:type', 'Watermark setting must have a type');
+        }
+
+        if (!$entity->getMediaId()) {
+            $errorStore->addError('o:media_id', 'Watermark setting must have a media');
         }
 
         if (!$entity->getPosition()) {
-            $errorStore->addError('o:position', 'Position cannot be empty');
+            $errorStore->addError('o:position', 'Watermark setting must have a position');
         }
 
-        if ($entity->getOpacity() < 0 || $entity->getOpacity() > 1) {
-            $errorStore->addError('o:opacity', 'Opacity must be between 0 and 1');
-        }
-
-        if (($entity->getType() === 'image' || $entity->getType() === 'text') && !$entity->getMediaId()) {
-            $errorStore->addError('o:media', 'Media ID is required for image or text watermarks');
+        if (!$entity->getOpacity()) {
+            $errorStore->addError('o:opacity', 'Watermark setting must have an opacity');
         }
     }
 }

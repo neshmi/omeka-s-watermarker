@@ -23,7 +23,7 @@ $escape = $this->plugin('escapeHtml');
 
 <div class="page-actions">
     <?php echo $this->formSubmit($form->get('submit')); ?>
-    <?php echo $this->hyperlink($this->translate('Cancel'), '/admin/watermarker', ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Cancel'), $this->url('admin/watermarker/editSet', ['id' => $watermark['set_id']]), ['class' => 'button']); ?>
 </div>
 
 <?php echo $this->formCollection($form, false); ?>

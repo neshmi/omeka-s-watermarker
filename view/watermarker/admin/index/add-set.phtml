@@ -14,9 +14,42 @@ $form->prepare();
     <?php echo $this->hyperlink($this->translate('Cancel'), $this->url('admin/watermarker'), ['class' => 'button']); ?>
 </div>
 
+<p class="explanation">
+    <?php echo $this->translate('First, create a new watermark set with a name and settings. After saving, you will be able to add watermark images to the set.'); ?>
+</p>
+
 <?php echo $this->form()->openTag($form); ?>
 <div id="page-content">
-    <?php echo $this->formCollection($form); ?>
+    <?php echo $this->formHidden($form->get('csrf')); ?>
+    <div class="field">
+        <div class="field-meta">
+            <?php echo $this->formLabel($form->get('name')); ?>
+            <div class="field-description"><?php echo $this->translate('Name for this watermark set.'); ?></div>
+        </div>
+        <div class="inputs">
+            <?php echo $this->formInput($form->get('name')); ?>
+        </div>
+    </div>
+
+    <div class="field">
+        <div class="field-meta">
+            <?php echo $this->formLabel($form->get('is_default')); ?>
+            <div class="field-description"><?php echo $this->translate('Check to make this the default watermark set. Only one set can be default.'); ?></div>
+        </div>
+        <div class="inputs">
+            <?php echo $this->formCheckbox($form->get('is_default')); ?>
+        </div>
+    </div>
+
+    <div class="field">
+        <div class="field-meta">
+            <?php echo $this->formLabel($form->get('enabled')); ?>
+            <div class="field-description"><?php echo $this->translate('Check to enable this watermark set.'); ?></div>
+        </div>
+        <div class="inputs">
+            <?php echo $this->formCheckbox($form->get('enabled')); ?>
+        </div>
+    </div>
 </div>
 <div class="page-actions">
     <?php echo $this->formSubmit($form->get('submit')); ?>

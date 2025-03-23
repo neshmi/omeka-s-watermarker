@@ -14,10 +14,10 @@ $escape = $this->plugin('escapeHtml');
 <?php echo $this->pageTitle($this->translate('Watermarker'), 1, $this->translate('Media Watermarking')); ?>
 
 <div id="page-actions">
-    <?php echo $this->hyperlink($this->translate('Add new watermark set'), $this->url('admin/watermarker', ['action' => 'addSet']), ['class' => 'button']); ?>
-    <?php echo $this->hyperlink($this->translate('Configure module'), $this->url('admin/watermarker', ['action' => 'config']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Add new watermark set'), $this->url('admin/watermarker/set-add'), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Configure module'), $this->url('admin/watermarker/config'), ['class' => 'button']); ?>
     <!-- <?php echo $this->hyperlink($this->translate('Test on recent media'), $this->url('admin/watermarker', ['action' => 'test']), ['class' => 'button']); ?> -->
-    <?php echo $this->hyperlink($this->translate('Check configurations'), $this->url('admin/watermarker', ['action' => 'check']), ['class' => 'button']); ?>
+    <?php echo $this->hyperlink($this->translate('Check configurations'), $this->url('admin/watermarker/check'), ['class' => 'button']); ?>
 </div>
 
 <?php if (empty($watermarkSets)): ?>
@@ -50,7 +50,7 @@ $escape = $this->plugin('escapeHtml');
             <td>
                 <strong><?php echo $escape($set['name']); ?></strong>
                 <br>
-                <a href="<?php echo $this->url('admin/watermarker', ['action' => 'editSet', 'id' => $set['id']]); ?>" class="watermark-set-link"><?php echo $this->translate('Manage watermarks'); ?></a>
+                <a href="<?php echo $this->url('admin/watermarker/editSet', ['id' => $set['id']]); ?>" class="watermark-set-link"><?php echo $this->translate('Manage watermarks'); ?></a>
             </td>
             <td>
                 <?php echo $set['is_default'] ? '<span class="label">' . $this->translate('Default') . '</span>' : ''; ?>
@@ -67,7 +67,7 @@ $escape = $this->plugin('escapeHtml');
                 ?>
             </td>
             <td>
-                <?php echo $this->hyperlink('', $this->url('admin/watermarker', ['action' => 'editSet', 'id' => $set['id']]), [
+                <?php echo $this->hyperlink('', $this->url('admin/watermarker/editSet', ['id' => $set['id']]), [
                     'class' => 'o-icon-edit',
                     'title' => $this->translate('Edit'),
                 ]); ?>
@@ -130,7 +130,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
 
             var setId = this.getAttribute('data-set-id');
-            window.location.href = '<?php echo $this->url('admin/watermarker', ['action' => 'editSet', 'id' => '']); ?>' + setId;
+            window.location.href = '<?php echo $this->url('admin/watermarker/editSet', ['id' => '']); ?>' + setId;
         });
     });
 });

@@ -100,7 +100,7 @@ class IndexController extends AbstractActionController
                 $setId = $connection->lastInsertId();
 
                 $this->messenger()->addSuccess('Watermark set added.');
-                return $this->redirect()->toRoute('admin/watermarker/set-add');
+                return $this->redirect()->toRoute('admin/watermarker/editSet', ['id' => $setId]);
             } else {
                 $this->messenger()->addFormErrors($form);
             }
@@ -261,8 +261,31 @@ class IndexController extends AbstractActionController
      */
     public function addAction()
     {
-        // Get set_id from query parameters
-        $setId = $this->params()->fromQuery('set_id');
+        // Get all possible set_id parameters
+        $setId = $this->params('set_id');
+        $querySetId = $this->params()->fromQuery('set_id');
+        $routeSetId = $this->params()->fromRoute('set_id');
+
+        // Get services for logging
+        $services = $this->getEvent()->getApplication()->getServiceManager();
+        $logger = $services->get('Omeka\Logger');
+
+        // Log all possible parameters and the request URI
+        $logger->info('Watermarker: Add watermark action called with detailed params', [
+            'set_id' => $setId,
+            'query_set_id' => $querySetId,
+            'route_set_id' => $routeSetId,
+            'route_params' => $this->params()->fromRoute(),
+            'query_params' => $this->params()->fromQuery(),
+            'post_params' => $this->getRequest()->isPost() ? 'POST request received' : 'Not a POST request',
+            'request_uri' => $this->getRequest()->getUri()->toString(),
+        ]);
+
+        // If set_id isn't in the route, try to get it from the query
+        if (!$setId && $querySetId) {
+            $setId = $querySetId;
+            $logger->info('Watermarker: Using set_id from query parameter: ' . $setId);
+        }
 
         // Basic validation
         if (!$setId) {
@@ -271,9 +294,7 @@ class IndexController extends AbstractActionController
         }
 
         // Verify set exists
-        $services = $this->getEvent()->getApplication()->getServiceManager();
         $connection = $services->get('Omeka\Connection');
-        $logger = $services->get('Omeka\Logger');
 
         $sql = "SELECT * FROM watermark_set WHERE id = :id LIMIT 1";
         $stmt = $connection->prepare($sql);
@@ -321,7 +342,7 @@ class IndexController extends AbstractActionController
                 $stmt->execute();
 
                 $this->messenger()->addSuccess('Watermark added to set.');
-                return $this->redirect()->toUrl('/admin/watermarker/editSet/' . $setId);
+                return $this->redirect()->toRoute('admin/watermarker/editSet', ['id' => $setId]);
             } else {
                 $this->messenger()->addFormErrors($form);
             }
@@ -403,7 +424,7 @@ class IndexController extends AbstractActionController
                 $stmt->execute();
 
                 $this->messenger()->addSuccess('Watermark updated.');
-                return $this->redirect()->toUrl('/admin/watermarker/editSet/' . $watermark['set_id']);
+                return $this->redirect()->toRoute('admin/watermarker/editSet', ['id' => $watermark['set_id']]);
             } else {
                 $this->messenger()->addFormErrors($form);
             }
@@ -453,7 +474,7 @@ class IndexController extends AbstractActionController
                 $stmt->execute();
 
                 $this->messenger()->addSuccess('Watermark deleted.');
-                return $this->redirect()->toUrl('/admin/watermarker/editSet/' . $watermark['set_id']);
+                return $this->redirect()->toRoute('admin/watermarker/editSet', ['id' => $watermark['set_id']]);
             } else {
                 $this->messenger()->addFormErrors($form);
             }
