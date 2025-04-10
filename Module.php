@@ -346,6 +346,13 @@ class Module extends AbstractModule
     {
         $logger = $this->getServiceLocator()->get('Omeka\Logger');
 
+        // Also listen to after.save.media for existing items
+        $sharedEventManager->attach(
+            'Omeka\Entity\Media',
+            'entity.persist.post',
+            [$this, 'handleMediaPersisted']
+        );
+
         // Attach to resource adapters for API operations
         $adapters = [
             \Omeka\Api\Adapter\ItemAdapter::class,
@@ -772,17 +779,44 @@ class Module extends AbstractModule
 
                 $logger->info(sprintf('Watermarker: Found derivatives: %s', implode(', ', array_keys($derivatives))));
 
-                // Get the first available watermark
-                $sql = "SELECT * FROM watermark_setting WHERE enabled = 1 ORDER BY id ASC LIMIT 1";
-                $watermarkConfig = $connection->fetchAssoc($sql);
+                // Check for resource-specific watermark assignment
+                $parentItem = $media->item();
+                $resourceType = 'item';
+                $resourceId = $parentItem ? $parentItem->id() : null;
 
-                if (!$watermarkConfig) {
-                    $logger->info('Watermarker: No enabled watermark configurations found');
+                if (!$resourceId) {
+                    $logger->warn('Watermarker: Media has no parent item, using default watermark');
+                } else {
+                    $logger->info(sprintf('Watermarker: Checking watermark assignment for item ID: %s', $resourceId));
+                }
+
+                // Get the watermark assignment for this resource
+                $assignment = $watermarkService->getWatermarkAssignment($resourceId, $resourceType);
+
+                // If explicitly set to no watermark, skip
+                if ($assignment && isset($assignment['explicitly_no_watermark']) && $assignment['explicitly_no_watermark']) {
+                    $logger->info('Watermarker: Resource is explicitly set to have no watermark');
                     return;
                 }
 
-                $logger->info(sprintf('Watermarker: Using watermark configuration ID: %s (%s)',
-                    $watermarkConfig['id'], $watermarkConfig['name']));
+                // Get the appropriate watermark for this media
+                $resourceSetId = null;
+                if ($assignment && isset($assignment['watermark_set_id'])) {
+                    $resourceSetId = $assignment['watermark_set_id'];
+                    $logger->info(sprintf('Watermarker: Found specific watermark set ID: %s', $resourceSetId));
+                }
+
+                // Get the watermark configuration
+                $watermarkConfig = $watermarkService->getWatermarkForMedia($media, $resourceSetId);
+
+                // If no watermark config found, we can't proceed
+                if (!$watermarkConfig) {
+                    $logger->info('Watermarker: No applicable watermark configuration found');
+                    return;
+                }
+
+                $logger->info(sprintf('Watermarker: Using watermark configuration ID: %s',
+                    $watermarkConfig['id']));
 
                 // Get media entity to access storage ID
                 $entityManager = $this->getServiceLocator()->get('Omeka\EntityManager');
