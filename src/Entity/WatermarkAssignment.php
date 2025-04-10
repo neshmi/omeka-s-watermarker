@@ -15,6 +15,7 @@ use Doctrine\ORM\Mapping as ORM;
  *         )
  *     }
  * )
+ * @ORM\HasLifecycleCallbacks
  */
 class WatermarkAssignment
 {
@@ -64,9 +65,20 @@ class WatermarkAssignment
      */
     protected $modified;
 
-    public function __construct()
+    /**
+     * @ORM\PrePersist
+     */
+    public function prePersist()
     {
         $this->created = new DateTime('now');
+    }
+
+    /**
+     * @ORM\PreUpdate
+     */
+    public function preUpdate()
+    {
+        $this->modified = new DateTime('now');
     }
 
     /**
@@ -132,7 +144,6 @@ class WatermarkAssignment
     public function setWatermarkSet(WatermarkSet $watermarkSet = null)
     {
         $this->watermarkSet = $watermarkSet;
-        $this->explicitlyNoWatermark = ($watermarkSet === null);
         return $this;
     }
 

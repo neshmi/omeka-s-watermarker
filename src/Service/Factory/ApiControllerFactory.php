@@ -12,7 +12,7 @@ class ApiControllerFactory implements FactoryInterface
         return new ApiController(
             $services->get('Omeka\EntityManager'),
             $services->get('Omeka\ApiManager'),
-            $services->get('Watermarker\AssignmentService')
+            $services->get('Watermarker\Service\AssignmentService')
         );
     }
 }

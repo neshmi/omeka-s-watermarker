@@ -6,13 +6,16 @@ use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
 use Doctrine\ORM\Mapping as ORM;
 use Omeka\Entity\Resource;
+use Omeka\Entity\AbstractEntity;
 
 /**
  * @ORM\Entity
  * @ORM\Table(name="watermark_set")
  */
-class WatermarkSet
+class WatermarkSet extends AbstractEntity
 {
+    const NONE = 'None';
+    const DEFAULT = 'Default';
     /**
      * @ORM\Id
      * @ORM\Column(type="integer")

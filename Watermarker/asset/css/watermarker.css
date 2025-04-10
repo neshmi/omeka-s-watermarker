@@ -1,0 +1,123 @@
+/* Watermarker CSS */
+
+/* Watermark section in advanced tab */
+.section-watermark {
+    margin-bottom: 1em;
+}
+
+.section-watermark .field {
+    margin-bottom: 1em;
+}
+
+.section-watermark .field-meta {
+    margin-bottom: 0.5em;
+}
+
+.section-watermark .field-meta label {
+    font-weight: bold;
+}
+
+.section-watermark .inputs {
+    margin-left: 0;
+}
+
+.section-watermark .value {
+    margin-bottom: 0.5em;
+}
+
+.section-watermark .watermark-status {
+    margin-bottom: 0.5em;
+    padding: 0.5em;
+    border-radius: 4px;
+}
+
+.section-watermark .watermark-status.success {
+    background-color: #e8f5e9;
+    color: #2e7d32;
+}
+
+.section-watermark .watermark-status.error {
+    background-color: #ffebee;
+    color: #c62828;
+}
+
+.section-watermark .watermark-select {
+    width: 100%;
+    max-width: 400px;
+    margin-bottom: 0.5em;
+}
+
+.section-watermark .watermark-save-button {
+    margin-top: 0.5em;
+}
+
+/* Watermarker admin page */
+.watermarker-admin .page-header {
+    margin-bottom: 2em;
+}
+
+.watermarker-admin .watermark-sets {
+    margin-bottom: 2em;
+}
+
+.watermarker-admin .watermark-set {
+    border: 1px solid #ddd;
+    padding: 1em;
+    margin-bottom: 1em;
+    border-radius: 4px;
+}
+
+.watermarker-admin .watermark-set-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1em;
+}
+
+.watermarker-admin .watermark-set-title {
+    font-size: 1.2em;
+    font-weight: bold;
+    margin: 0;
+}
+
+.watermarker-admin .watermark-set-actions {
+    display: flex;
+    gap: 0.5em;
+}
+
+.watermarker-admin .watermark-set-content {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1em;
+}
+
+.watermarker-admin .watermark-preview {
+    border: 1px solid #ddd;
+    padding: 0.5em;
+    border-radius: 4px;
+}
+
+.watermarker-admin .watermark-preview img {
+    max-width: 100%;
+    height: auto;
+}
+
+.watermarker-admin .watermark-settings {
+    margin-top: 1em;
+}
+
+.watermarker-admin .watermark-settings label {
+    display: block;
+    margin-bottom: 0.5em;
+}
+
+.watermarker-admin .watermark-settings select,
+.watermarker-admin .watermark-settings input {
+    width: 100%;
+    max-width: 300px;
+    margin-bottom: 0.5em;
+}
+
+.watermarker-admin .watermark-settings .button {
+    margin-top: 0.5em;
+}

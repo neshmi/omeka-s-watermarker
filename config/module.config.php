@@ -18,6 +18,7 @@ return [
             'Watermarker\Controller\Admin\Index' => Controller\Admin\IndexControllerFactory::class,
             'Watermarker\Controller\Admin\Assignment' => Service\Factory\AssignmentControllerFactory::class,
             'Watermarker\Controller\Api' => Service\Factory\ApiControllerFactory::class,
+            'Watermarker\Controller\Admin\WatermarkController' => 'Watermarker\Service\Controller\WatermarkControllerFactory',
         ],
     ],
     'navigation' => [
@@ -177,16 +178,24 @@ return [
             'watermarker-api' => [
                 'type' => 'Segment',
                 'options' => [
-                    'route' => '/watermarker-api/:action',
-                    'defaults' => [
-                        '__NAMESPACE__' => 'Watermarker\Controller',
-                        'controller' => 'Api',
-                    ],
+                    'route' => '/admin/watermarker-api/:action',
                     'constraints' => [
-                        'action' => '(getAssignment|setAssignment|getWatermarkSets)',
+                        'action' => '[a-zA-Z][a-zA-Z0-9_-]*',
+                    ],
+                    'defaults' => [
+                        'controller' => 'Watermarker\Controller\Api',
                     ],
                 ],
-                'may_terminate' => true,
+            ],
+            'watermarker-api-test' => [
+                'type' => 'Literal',
+                'options' => [
+                    'route' => '/admin/watermarker/test',
+                    'defaults' => [
+                        'controller' => 'Watermarker\Controller\Api',
+                        'action' => 'test',
+                    ],
+                ],
             ],
         ],
     ],
@@ -202,11 +211,14 @@ return [
             Form\WatermarkSetForm::class => Form\WatermarkSetForm::class,
             Form\WatermarkAssignmentForm::class => Form\WatermarkAssignmentForm::class,
         ],
+        'factories' => [
+            Form\Admin\BatchEditFieldset::class => \Omeka\Form\Factory\InvokableFactory::class,
+        ],
     ],
     'service_manager' => [
         'factories' => [
             'Watermarker\Service\WatermarkService' => 'Watermarker\Service\WatermarkServiceFactory',
-            'Watermarker\AssignmentService' => Service\Factory\AssignmentServiceFactory::class,
+            'Watermarker\Service\AssignmentService' => Service\Factory\AssignmentServiceFactory::class,
             'Watermarker\Service\WatermarkApplicator' => Service\Factory\WatermarkApplicatorFactory::class,
         ],
         'aliases' => [

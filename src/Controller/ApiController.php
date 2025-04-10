@@ -23,21 +23,27 @@ class ApiController extends AbstractActionController
      */
     public function getAssignmentAction()
     {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker API: getAssignmentAction called');
+
         $resourceType = $this->params()->fromQuery('resource_type');
         $resourceId = $this->params()->fromQuery('resource_id');
 
         if (!$resourceType || !$resourceId) {
+            $logger->warn('Watermarker API: Missing resource information in getAssignmentAction');
             return new JsonModel([
                 'status' => 'error',
                 'message' => 'Missing resource information'
             ]);
         }
 
+        $logger->info(sprintf('Watermarker API: Getting assignment for %s ID %s', $resourceType, $resourceId));
+
         // Convert resource type
         $apiResourceType = $resourceType;
         if ($resourceType === 'item') {
             $apiResourceType = 'items';
-        } elseif ($resourceType === 'item-set') {
+        } elseif ($resourceType === 'item-set' || $resourceType === 'item_sets') {
             $apiResourceType = 'item_sets';
         }
 
@@ -45,46 +51,93 @@ class ApiController extends AbstractActionController
             // Verify resource exists
             $this->api->read($apiResourceType, $resourceId);
 
-            // Get assignment
-            $response = $this->api->search('watermark_assignments', [
-                'resource_type' => $apiResourceType,
-                'resource_id' => $resourceId,
-            ]);
-            $assignments = $response->getContent();
-            $assignment = count($assignments) > 0 ? $assignments[0] : null;
+            // Get assignment from database directly
+            $conn = $this->entityManager->getConnection();
+            $stmt = $conn->prepare(
+                'SELECT * FROM watermark_assignment
+                 WHERE resource_type = :type AND resource_id = :id'
+            );
+            $stmt->bindValue('type', $apiResourceType);
+            $stmt->bindValue('id', $resourceId);
+            $stmt->execute();
+            $assignmentData = $stmt->fetch();
 
-            // Get available watermark sets
-            $response = $this->api->search('watermark_sets', ['enabled' => true]);
-            $watermarkSets = $response->getContent();
-            $formattedSets = [];
-            foreach ($watermarkSets as $set) {
-                $formattedSets[] = [
-                    'id' => $set->id(),
-                    'name' => $set->name(),
-                    'is_default' => $set->isDefault()
+            // Format assignment
+            $assignment = null;
+            if ($assignmentData) {
+                $assignment = [
+                    'id' => $assignmentData['id'],
+                    'resource_type' => $assignmentData['resource_type'],
+                    'resource_id' => $assignmentData['resource_id'],
+                    'watermark_set_id' => $assignmentData['watermark_set_id'],
+                    'explicitly_no_watermark' => (bool)$assignmentData['explicitly_no_watermark']
                 ];
             }
 
-            // Get default watermark set
-            $response = $this->api->search('watermark_sets', [
-                'is_default' => true,
-                'enabled' => true,
-            ]);
-            $defaultSets = $response->getContent();
-            $defaultSet = count($defaultSets) > 0 ? $defaultSets[0]->getJsonLd() : null;
+            // Get available watermark sets
+            $stmt = $conn->prepare('SELECT * FROM watermark_set WHERE enabled = 1');
+            $stmt->execute();
+            $sets = $stmt->fetchAll();
 
-            // Format data
-            $data = [
-                'assignment' => $assignment ? $assignment->getJsonLd() : null,
-                'watermark_sets' => $formattedSets,
-                'default_set' => $defaultSet,
-            ];
+            // Format watermark sets
+            $formattedSets = [];
+            foreach ($sets as $set) {
+                $formattedSets[] = [
+                    'id' => $set['id'],
+                    'name' => $set['name'],
+                    'is_default' => (bool)$set['is_default']
+                ];
+            }
+
+            $logger->info(sprintf('Watermarker API: Found %d watermark sets', count($formattedSets)));
 
             return new JsonModel([
                 'status' => 'success',
-                'data' => $data
+                'assignment' => $assignment,
+                'sets' => $formattedSets
             ]);
         } catch (\Exception $e) {
+            $logger->error('Watermarker API: Error in getAssignmentAction: ' . $e->getMessage());
+            return new JsonModel([
+                'status' => 'error',
+                'message' => $e->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * List available watermark sets
+     */
+    public function listSetsAction()
+    {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker API: listSetsAction called');
+
+        try {
+            // Get available watermark sets directly from database
+            $conn = $this->entityManager->getConnection();
+            $stmt = $conn->prepare('SELECT * FROM watermark_set WHERE enabled = 1');
+            $stmt->execute();
+            $sets = $stmt->fetchAll();
+
+            // Format watermark sets
+            $formattedSets = [];
+            foreach ($sets as $set) {
+                $formattedSets[] = [
+                    'id' => $set['id'],
+                    'name' => $set['name'],
+                    'is_default' => (bool)$set['is_default']
+                ];
+            }
+
+            $logger->info(sprintf('Watermarker API: Found %d watermark sets', count($formattedSets)));
+
+            return new JsonModel([
+                'status' => 'success',
+                'sets' => $formattedSets
+            ]);
+        } catch (\Exception $e) {
+            $logger->error('Watermarker API: Error in listSetsAction: ' . $e->getMessage());
             return new JsonModel([
                 'status' => 'error',
                 'message' => $e->getMessage()
@@ -97,20 +150,55 @@ class ApiController extends AbstractActionController
      */
     public function setAssignmentAction()
     {
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker API: setAssignmentAction called');
+
         if (!$this->getRequest()->isPost()) {
+            $logger->warn('Watermarker API: setAssignmentAction called with non-POST request');
             return new JsonModel([
                 'status' => 'error',
                 'message' => 'Only POST requests are allowed'
             ]);
         }
 
-        $data = $this->params()->fromPost();
+        // Log request details
+        $logger->info('Watermarker API: Request headers: ' . json_encode($this->getRequest()->getHeaders()->toArray()));
+        $logger->info('Watermarker API: Request content type: ' . $this->getRequest()->getHeader('Content-Type'));
+        $logger->info('Watermarker API: Raw request content: ' . $this->getRequest()->getContent());
+
+        // Try to get JSON data first
+        $jsonData = $this->getRequest()->getContent();
+        if ($jsonData) {
+            try {
+                $data = json_decode($jsonData, true);
+                $logger->info('Watermarker API: Parsed JSON data: ' . json_encode($data));
+            } catch (\Exception $e) {
+                $logger->warn('Watermarker API: Failed to parse JSON data: ' . $e->getMessage());
+                $data = null;
+            }
+        }
+
+        // Fall back to POST data if JSON parsing failed
+        if (empty($data)) {
+            $data = $this->params()->fromPost();
+            $logger->info('Watermarker API: POST data: ' . json_encode($data));
+        }
+
         $resourceType = $data['resource_type'] ?? null;
         $resourceId = $data['resource_id'] ?? null;
-        $watermarkSetId = $data['watermark_set_id'] ?? null;
+        $watermarkSetId = $data['watermark_set_id'] ?? $data['o-watermarker:set'] ?? null;
         $explicitlyNoWatermark = (bool) ($data['explicitly_no_watermark'] ?? false);
 
+        $logger->info(sprintf(
+            'Watermarker API: Setting assignment for %s ID %s, set ID: %s, explicitly no watermark: %s',
+            $resourceType,
+            $resourceId,
+            $watermarkSetId === null ? 'null' : $watermarkSetId,
+            $explicitlyNoWatermark ? 'true' : 'false'
+        ));
+
         if (!$resourceType || !$resourceId) {
+            $logger->warn('Watermarker API: Missing resource information in setAssignmentAction');
             return new JsonModel([
                 'status' => 'error',
                 'message' => 'Missing resource information'
@@ -118,12 +206,63 @@ class ApiController extends AbstractActionController
         }
 
         try {
-            $result = $this->assignmentService->setAssignment(
-                $resourceType,
-                $resourceId,
-                $watermarkSetId,
-                $explicitlyNoWatermark
+            // Direct database update to avoid API complexity
+            $conn = $this->entityManager->getConnection();
+
+            // Handle special watermark set values
+            if ($watermarkSetId === 'None') {
+                $watermarkSetId = null;
+                $explicitlyNoWatermark = true;
+            } else if ($watermarkSetId === 'Default') {
+                $watermarkSetId = null;
+                $explicitlyNoWatermark = false;
+            }
+
+            // Check if assignment already exists
+            $stmt = $conn->prepare(
+                'SELECT id FROM watermark_assignment
+                 WHERE resource_type = :type AND resource_id = :id'
             );
+            $stmt->bindValue('type', $resourceType);
+            $stmt->bindValue('id', $resourceId);
+            $stmt->execute();
+            $existing = $stmt->fetch();
+
+            $now = date('Y-m-d H:i:s');
+
+            if ($existing) {
+                // Update existing assignment
+                $stmt = $conn->prepare(
+                    'UPDATE watermark_assignment
+                     SET watermark_set_id = :set_id,
+                         explicitly_no_watermark = :no_watermark,
+                         modified = :modified
+                     WHERE id = :id'
+                );
+                $stmt->bindValue('id', $existing['id']);
+                $stmt->bindValue('set_id', $watermarkSetId);
+                $stmt->bindValue('no_watermark', $explicitlyNoWatermark ? 1 : 0);
+                $stmt->bindValue('modified', $now);
+                $stmt->execute();
+
+                $logger->info('Watermarker API: Updated existing assignment ID ' . $existing['id']);
+            } else {
+                // Create new assignment
+                $stmt = $conn->prepare(
+                    'INSERT INTO watermark_assignment
+                     (resource_type, resource_id, watermark_set_id, explicitly_no_watermark, created, modified)
+                     VALUES (:type, :id, :set_id, :no_watermark, :created, :modified)'
+                );
+                $stmt->bindValue('type', $resourceType);
+                $stmt->bindValue('id', $resourceId);
+                $stmt->bindValue('set_id', $watermarkSetId);
+                $stmt->bindValue('no_watermark', $explicitlyNoWatermark ? 1 : 0);
+                $stmt->bindValue('created', $now);
+                $stmt->bindValue('modified', $now);
+                $stmt->execute();
+
+                $logger->info('Watermarker API: Created new assignment');
+            }
 
             return new JsonModel([
                 'status' => 'success',
@@ -135,6 +274,7 @@ class ApiController extends AbstractActionController
                 ]
             ]);
         } catch (\Exception $e) {
+            $logger->error('Watermarker API: Error in setAssignmentAction: ' . $e->getMessage());
             return new JsonModel([
                 'status' => 'error',
                 'message' => $e->getMessage()
@@ -143,33 +283,21 @@ class ApiController extends AbstractActionController
     }
 
     /**
-     * Get list of watermark sets
+     * Test action to verify API accessibility
      */
-    public function getWatermarkSetsAction()
+    public function testAction()
     {
-        try {
-            // Get watermark sets
-            $response = $this->api->search('watermark_sets', ['enabled' => true]);
-            $watermarkSets = $response->getContent();
-            $formattedSets = [];
+        $logger = $this->getServiceLocator()->get('Omeka\Logger');
+        $logger->info('Watermarker API: testAction called');
 
-            foreach ($watermarkSets as $set) {
-                $formattedSets[] = [
-                    'id' => $set->id(),
-                    'name' => $set->name(),
-                    'is_default' => $set->isDefault()
-                ];
-            }
-
-            return new JsonModel([
-                'status' => 'success',
-                'data' => $formattedSets
-            ]);
-        } catch (\Exception $e) {
-            return new JsonModel([
-                'status' => 'error',
-                'message' => $e->getMessage()
-            ]);
-        }
+        return new JsonModel([
+            'status' => 'success',
+            'message' => 'API is accessible',
+            'request' => [
+                'method' => $this->getRequest()->getMethod(),
+                'headers' => $this->getRequest()->getHeaders()->toArray(),
+                'content_type' => $this->getRequest()->getHeader('Content-Type'),
+            ]
+        ]);
     }
 }

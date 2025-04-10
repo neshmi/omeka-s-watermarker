@@ -2,442 +2,141 @@
  * Watermarker module styles
  */
 
-/* Watermark tabs integration */
-#watermarker.section {
-  display: none;
-  padding: 20px 0;
-  border-top: 1px solid #dfdfdf;
-  margin-top: 20px;
-}
-
-#watermarker.section.active {
-  display: block;
-}
-
-/* Additional support for Omeka S tab system */
-.section-nav + #watermarker,
-#section-nav + #watermarker {
-  margin-top: 0;
-}
-
-/* Watermark tab previews */
-.watermarker-preview {
-  max-width: 100px;
-  max-height: 100px;
-  border: 1px solid #dfdfdf;
-  padding: 5px;
-  background-color: #fff;
-}
-
-.watermarker-preview img {
-  max-width: 100%;
-  max-height: 100%;
-}
-
-/* Help text for settings */
-.watermarker-help {
-  font-size: 0.9em;
-  color: #676767;
-  margin-top: 5px;
-}
-
-/* Status indicators */
-.watermarker-status-enabled {
-  color: #0a8;
-}
-
-.watermarker-status-disabled {
-  color: #767676;
-}
-
-/* Preview cell and placeholder */
-.watermarker-preview-cell {
-  width: 100px;
-  max-width: 100px;
-  text-align: center;
-}
-
-.no-image {
-  display: inline-block;
-  background-color: #f5f5f5;
-  border: 1px dashed #ccc;
-  color: #767676;
-  padding: 5px;
-  text-align: center;
-  width: 80px;
-  height: 80px;
-  line-height: 70px;
-  font-style: italic;
-  font-size: 0.9em;
-}
-
-/* Watermark set row styles */
-tr.watermark-set-row {
-  cursor: pointer;
-}
-
-tr.watermark-set-row:hover {
-  background-color: #f5f5f5;
-}
-
-.watermarker-set-previews {
-  display: flex;
-  justify-content: flex-start;
-  gap: 5px;
-  margin-top: 8px;
-  margin-bottom: 8px;
-  flex-wrap: wrap;
-}
-
-.watermarker-set-preview {
-  display: inline-block;
-  max-width: 60px;
-  max-height: 60px;
-  border: 1px solid #dfdfdf;
-  padding: 3px;
-  background-color: #fff;
-}
-
-.watermarker-set-preview img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-
-.watermarker-more {
-  display: inline-block;
-  background-color: #f0f0f0;
-  border-radius: 3px;
-  padding: 2px 5px;
-  font-size: 0.85em;
-  color: #666;
-}
-
-/* Opacity slider styling */
-#watermark-opacity {
-  width: 100%;
-}
-
-/* Watermark position selector */
-.watermark-position-selector {
-  display: grid;
-  grid-template-columns: repeat(3, 60px);
-  grid-template-rows: repeat(3, 60px);
-  gap: 5px;
-  margin: 10px 0;
-}
-
-.position-cell {
-  border: 1px solid #ddd;
-  background: #f5f5f5;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.position-cell:hover {
-  background: #e0e0e0;
-}
-
-.position-cell.active {
-  background: #4e78cc;
-  color: white;
-  border-color: #2c5499;
-}
-
-/* Bottom-full position is a special case - spans full width */
-.position-cell[data-position="bottom-full"] {
-  grid-column: 1 / span 3;
-  grid-row: 4;
-  height: 30px;
-}
-
-/* Add these styles to ensure the watermark tab works well */
-
-/* Tab navigation styles */
-#section-nav,
-.section-nav {
-  display: block;
-  margin-bottom: 1rem;
-  background-color: #f7f7f7;
-  border-bottom: 1px solid #dfdfdf;
-}
-
-#section-nav ul,
-.section-nav ul {
-  display: flex;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-#section-nav li,
-.section-nav li {
-  margin: 0;
-  padding: 0;
-}
-
-#section-nav li a,
-.section-nav li a {
-  display: block;
-  padding: 0.5rem 1rem;
-  text-decoration: none;
-  color: #676767;
-  border-bottom: 3px solid transparent;
-}
-
-#section-nav li.active a,
-.section-nav li.active a,
-#section-nav li a:hover,
-.section-nav li a:hover {
-  border-bottom: 3px solid #A91919;
-  color: #A91919;
-}
-
-/* Watermark section styles */
-#watermark-section {
-  border: 1px solid #dfdfdf;
-  padding: 1em;
-  margin-top: 1em;
-  background-color: #fff;
-  border-radius: 3px;
-}
-
-#watermark-section .field {
-  margin: 1em 0;
-}
-
-#watermark-section .field-meta {
-  width: 30%;
-  max-width: 300px;
-  display: inline-block;
-  vertical-align: top;
-}
-
-#watermark-section .inputs {
-  width: 70%;
-  max-width: calc(100% - 320px);
-  display: inline-block;
-  vertical-align: top;
-}
-
-#watermark-section .watermark-status {
-  margin-bottom: 1em;
-  font-weight: bold;
-}
-
-#watermark-section .watermark-edit-link {
-  display: inline-block;
-  padding: 0.5em 1em;
-  background-color: #A91919;
-  color: #fff;
-  text-decoration: none;
-  border-radius: 3px;
-  margin-top: 0.5em;
-}
-
-#watermark-section .watermark-edit-link:hover {
-  background-color: #7D0000;
-}
-
-/* Indicator styles */
-#watermarker-loaded-indicator {
-  position: fixed;
-  top: 10px;
-  right: 10px;
-  background: blue;
-  color: white;
-  padding: 10px;
-  z-index: 9999;
-  font-family: sans-serif;
-  border-radius: 4px;
-  font-size: 12px;
-  box-shadow: 0 2px 5px rgba(0,0,0,0.3);
-  transition: background-color 0.3s ease;
-}
-
-/* Responsive styles for mobile */
-@media screen and (max-width: 640px) {
-  #section-nav ul,
-  .section-nav ul {
-    flex-wrap: wrap;
-  }
-
-  #watermark-section .field-meta,
-  #watermark-section .inputs {
-    width: 100%;
-    max-width: none;
-    display: block;
-  }
-
-  #watermark-section .field-meta {
-    margin-bottom: 0.5em;
-  }
-}
-
-/* Watermark Sets List */
-.watermark-set-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 20px;
-  margin-top: 15px;
-}
-
-.watermark-set {
-  background: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 3px;
-  padding: 15px;
-  width: 300px;
-}
-
-.watermark-set h4 {
-  margin-top: 0;
-  margin-bottom: 10px;
-}
-
-.watermark-preview {
-  margin-bottom: 10px;
-}
-
-.watermark-set-actions {
-  display: flex;
-  gap: 10px;
-  margin-top: 15px;
-}
-
-/* Watermark Form (in edit pages) */
-.watermark-form {
-  margin-bottom: 10px;
-}
-
-.watermark-select {
-  min-width: 250px;
-  margin-right: 10px;
-}
-
-.watermark-save-button {
-  margin-top: 10px;
-}
-
-.watermark-status {
-  margin-top: 8px;
-  padding: 5px 0;
-  font-size: 0.9em;
-}
-
-.watermark-status.success {
-  color: #3c763d;
-}
-
-.watermark-status.error {
-  color: #a94442;
-  padding: 5px;
-  background-color: #f2dede;
-  border-radius: 3px;
-}
-
-.watermark-status.pending {
-  color: #777;
-  font-style: italic;
-}
-
-/* Watermark preview */
-.watermark-media-preview {
-  max-width: 300px;
-  margin-top: 10px;
-  padding: 10px;
-  background: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 3px;
-}
-
-.watermark-media-preview img {
-  max-width: 100%;
-  height: auto;
-}
-
-/* No watermark sets message */
-.no-watermark-sets {
-  margin: 20px 0;
-  padding: 15px;
-  background: #f5f5f5;
-  border: 1px solid #ddd;
-  border-radius: 3px;
-}
-
-/* Watermark form */
-.watermark-form {
-    margin-bottom: 1rem;
-}
-
-.watermark-form select {
-    margin-right: 1rem;
-    margin-bottom: 0.5rem;
-    min-width: 200px;
-}
-
-.watermark-status {
-    margin: 0.5rem 0;
-    padding: 0.5rem 0;
-}
-
-.watermark-status.success {
-    color: #46a546;
-}
-
-.watermark-status.error {
-    color: #9d261d;
-}
-
-.watermark-status.pending {
-    color: #0088cc;
-    font-style: italic;
-}
-
-.watermark-save-button {
-    margin-top: 0.5rem;
-}
-
-/* Tabs and sections */
+/* Watermark section container */
 .section-watermark {
-    margin-top: 1rem;
+    margin-top: 20px;
+    padding-top: 20px;
     border-top: 1px solid #dfdfdf;
-    padding-top: 1rem;
 }
 
-/* Watermark sets management */
-.watermark-sets-list {
-    margin: 1rem 0;
-}
-
-.watermark-set-item {
-    padding: 0.5rem;
+/* Watermark section content */
+.watermarker-section {
+    margin-bottom: 20px;
+    background-color: #fff;
+    padding: 15px;
     border: 1px solid #dfdfdf;
-    margin-bottom: 0.5rem;
-    background: #f9f9f9;
+    border-radius: 3px;
 }
 
-.watermark-set-title {
+/* Section description */
+.watermarker-section .description {
+    font-style: italic;
+    color: #666;
+    margin-bottom: 15px;
+}
+
+/* Watermark status message */
+.watermark-status {
+    margin: 10px 0;
+    padding: 8px;
+    border-radius: 3px;
     font-weight: bold;
 }
 
-.watermark-set-actions {
-    margin-top: 0.5rem;
+.watermark-status.success {
+    background-color: #dff0d8;
+    color: #3c763d;
+    border: 1px solid #d6e9c6;
 }
 
-.watermark-set-actions a {
-    margin-right: 0.5rem;
+.watermark-status.error {
+    background-color: #f2dede;
+    color: #a94442;
+    border: 1px solid #ebccd1;
 }
 
-/* Watermark image preview */
-.watermark-preview {
-    max-width: 200px;
-    max-height: 200px;
+.watermark-status.default {
+    background-color: #fcf8e3;
+    color: #8a6d3b;
+    border: 1px solid #faebcc;
+}
+
+/* Success/error messages */
+.watermark-message {
+    margin: 10px 0;
+    padding: 8px;
+    border-radius: 3px;
+    font-weight: bold;
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+.watermark-message.success {
+    background-color: #dff0d8;
+    color: #3c763d;
+    border: 1px solid #d6e9c6;
+}
+
+.watermark-message.error {
+    background-color: #f2dede;
+    color: #a94442;
+    border: 1px solid #ebccd1;
+}
+
+/* Form elements */
+.watermark-setting {
+    margin-bottom: 15px;
+}
+
+.watermark-setting select,
+.watermark-select {
+    width: 100%;
+    max-width: 300px;
+    padding: 6px;
     border: 1px solid #dfdfdf;
-    margin: 0.5rem 0;
-    padding: 0.5rem;
-    background: #fff;
+    border-radius: 3px;
+    background-color: #fff;
+    margin-right: 10px;
+}
+
+/* Watermark form in the advanced tab */
+.watermarker-field {
+    margin-bottom: 15px;
+}
+
+.watermarker-field .inputs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+@media screen and (max-width: 640px) {
+    .watermarker-field .inputs {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    
+    .watermark-save-button {
+        margin-left: 0;
+        margin-top: 10px;
+    }
+}
+
+.watermark-save-button {
+    display: inline-block;
+    padding: 8px 12px;
+    background-color: #0074BD;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: normal;
+    text-align: center;
+}
+
+.watermark-save-button:hover {
+    background-color: #005694;
+    text-decoration: none;
+}
+
+.watermark-save-button:disabled {
+    background-color: #999;
+    cursor: not-allowed;
+}
+
+/* Animation for messages */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
 }

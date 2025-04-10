@@ -79,16 +79,26 @@ class WatermarkAssignmentAdapter extends AbstractEntityAdapter
         }
 
         // Handle watermark set relationship
-        if (isset($data['o:watermark_set']['o:id']) && !empty($data['o:watermark_set']['o:id'])) {
-            $watermarkSet = $this->getAdapter('watermark_sets')->findEntity($data['o:watermark_set']['o:id']);
-            $entity->setWatermarkSet($watermarkSet);
-            $entity->setExplicitlyNoWatermark(false);
-        } elseif (isset($data['o:explicitly_no_watermark']) && $data['o:explicitly_no_watermark']) {
-            $entity->setWatermarkSet(null);
-            $entity->setExplicitlyNoWatermark(true);
-        } else {
-            $entity->setWatermarkSet(null);
-            $entity->setExplicitlyNoWatermark(false);
+        if (isset($data['o:watermark_set'])) {
+            if (is_array($data['o:watermark_set']) && isset($data['o:watermark_set']['o:id'])) {
+                $watermarkSet = $this->getAdapter('watermark_sets')
+                    ->findEntity($data['o:watermark_set']['o:id']);
+                $entity->setWatermarkSet($watermarkSet);
+                $entity->setExplicitlyNoWatermark(false);
+            } else {
+                $entity->setWatermarkSet(null);
+            }
+        }
+
+        if (isset($data['o:explicitly_no_watermark'])) {
+            $entity->setExplicitlyNoWatermark((bool) $data['o:explicitly_no_watermark']);
+            if ($data['o:explicitly_no_watermark']) {
+                $entity->setWatermarkSet(null);
+            }
+        }
+
+        if ($request->getOperation() === Request::CREATE) {
+            $entity->setCreated(new DateTime('now'));
         }
 
         if ($request->getOperation() === Request::UPDATE) {

@@ -41,6 +41,14 @@ class WatermarkSetAdapter extends AbstractEntityAdapter
      */
     public function buildQuery(QueryBuilder $qb, array $query)
     {
+        // Add ID filter
+        if (isset($query['id'])) {
+            $qb->andWhere($qb->expr()->eq(
+                'omeka_root.id',
+                $qb->expr()->literal((int) $query['id'])
+            ));
+        }
+
         // Add search filter
         if (isset($query['search']) && is_string($query['search']) && $query['search'] !== '') {
             $qb->andWhere($qb->expr()->like(

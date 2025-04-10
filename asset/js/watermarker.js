@@ -1,161 +1,170 @@
 /**
- * Watermarker module JavaScript
+ * Simple Watermarker module JavaScript - no fancy features
  */
 (function() {
     'use strict';
 
-    // Add a flag to track initialization
-    var isInitialized = false;
+    console.log('Watermarker: Basic JavaScript loaded');
 
     // Initialize when DOM is loaded
     document.addEventListener('DOMContentLoaded', function() {
-        initializeWatermarker();
-    });
+        console.log('Watermarker: DOM loaded, initializing');
 
-    // Also try on window load as a backup
-    window.addEventListener('load', function() {
-        initializeWatermarker();
-    });
-
-    /**
-     * Initialize watermarker functionality
-     */
-    function initializeWatermarker() {
-        if (isInitialized) {
+        // Find the watermark select element
+        const watermarkSelect = document.getElementById('o-watermark-set');
+        if (!watermarkSelect) {
+            console.error('Watermarker: Select element not found');
             return;
         }
 
-        isInitialized = true;
-        console.log('Watermarker: Initializing');
+        console.log('Watermarker: Found select element', watermarkSelect);
 
-        // Handle position selector if present
-        var positionSelector = document.querySelector('.watermark-position-selector');
-        if (positionSelector) {
-            initPositionSelector(positionSelector);
+        // Get the resource type and ID from hidden inputs
+        const resourceTypeInput = document.querySelector('input[name="resource_type"]');
+        const resourceIdInput = document.querySelector('input[name="resource_id"]');
+
+        if (!resourceTypeInput || !resourceIdInput) {
+            console.error('Watermarker: Resource type or ID inputs not found');
+            return;
         }
 
-        // Preview watermark if on edit or add page
-        var watermarkMedia = document.getElementById('watermark-media');
-        if (watermarkMedia) {
-            watermarkMedia.addEventListener('change', updateWatermarkPreview);
-        }
+        const resourceType = resourceTypeInput.value;
+        const resourceId = resourceIdInput.value;
 
-        // Initialize opacity slider if present
-        var opacitySlider = document.getElementById('watermark-opacity');
-        var opacityValue = document.getElementById('opacity-value');
-        if (opacitySlider && opacityValue) {
-            opacitySlider.addEventListener('input', function() {
-                opacityValue.textContent = opacitySlider.value;
-            });
-        }
-    }
+        console.log(`Watermarker: Resource type: ${resourceType}, ID: ${resourceId}`);
 
-    /**
-     * Initialize position selector
-     *
-     * @param {HTMLElement} selector The position selector element
-     */
-    function initPositionSelector(selector) {
-        var cells = selector.querySelectorAll('.position-cell');
+        // Add change event handler
+        watermarkSelect.addEventListener('change', function() {
+            const selectedValue = this.value;
+            console.log(`Watermarker: Selected value: ${selectedValue}`);
 
-        // Set up position selector cells
-        cells.forEach(function(cell) {
-            cell.addEventListener('click', function() {
-                // Remove active class from all cells
-                cells.forEach(function(c) {
-                    c.classList.remove('active');
-                });
+            saveWatermarkSetting(selectedValue);
+        });
 
-                // Add active class to clicked cell
-                this.classList.add('active');
+        // Add a save button after the select
+        const saveButton = document.createElement('button');
+        saveButton.type = 'button';
+        saveButton.className = 'watermark-save-button button';
+        saveButton.textContent = 'Save Watermark Setting';
 
-                // Update hidden input with position value
-                var positionInput = selector.querySelector('input[type="hidden"]');
-                if (positionInput) {
-                    positionInput.value = this.getAttribute('data-position');
+        // Insert the button after the select
+        watermarkSelect.insertAdjacentElement('afterend', saveButton);
+
+        // Add click event to the save button
+        saveButton.addEventListener('click', function() {
+            const selectedValue = watermarkSelect.value;
+            console.log(`Watermarker: Saving value: ${selectedValue}`);
+
+            saveWatermarkSetting(selectedValue);
+        });
+
+        // Function to save the watermark setting
+        function saveWatermarkSetting(selectedValue) {
+            // Find the status element
+            const statusElement = document.querySelector('.watermark-status');
+            if (statusElement) {
+                statusElement.textContent = 'Saving...';
+                statusElement.className = 'watermark-status saving';
+            }
+
+            // Prepare the data to send
+            const data = {
+                resource_type: resourceType,
+                resource_id: resourceId,
+                'o:id': resourceId,
+                'o-watermarker:set': selectedValue
+            };
+
+            console.log('Watermarker: Sending data:', data);
+
+            // Get CSRF token if available
+            const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+
+            if (csrfToken) {
+                headers['X-CSRF-Token'] = csrfToken;
+                console.log('Watermarker: CSRF Token:', csrfToken);
+            }
+
+            // Send the request to the correct endpoint
+            fetch('/admin/watermarker-api/setAssignment', {
+                method: 'POST',
+                headers: headers,
+                body: JSON.stringify(data)
+            })
+            .then(response => {
+                console.log('Watermarker: Response status:', response.status);
+                console.log('Watermarker: Response headers:', response.headers);
+                if (!response.ok) {
+                    return response.text().then(text => {
+                        console.error('Watermarker: Error response text:', text);
+                        throw new Error(`HTTP error! Status: ${response.status}, Text: ${text}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Watermarker: Response data:', data);
+                if (data.status === 'success') {
+                    showMessage('Watermark settings saved successfully', 'success');
+                    // Update status element if it exists
+                    if (statusElement) {
+                        statusElement.textContent = 'Watermark settings saved successfully.';
+                        statusElement.className = 'watermark-status success';
+
+                        // Reset after a few seconds
+                        setTimeout(() => {
+                            statusElement.textContent = '';
+                            statusElement.className = 'watermark-status';
+                        }, 3000);
+                    }
+                } else {
+                    showMessage(data.message || 'Error saving watermark settings', 'error');
+                    // Update status element if it exists
+                    if (statusElement) {
+                        statusElement.textContent = data.message || 'Error saving watermark settings.';
+                        statusElement.className = 'watermark-status error';
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Watermarker: Error:', error);
+                showMessage('Error saving watermark settings: ' + error.message, 'error');
+                // Update status element if it exists
+                if (statusElement) {
+                    statusElement.textContent = 'Error saving watermark settings: ' + error.message;
+                    statusElement.className = 'watermark-status error';
                 }
             });
-        });
-    }
-
-    /**
-     * Update watermark preview when file is selected
-     */
-    function updateWatermarkPreview() {
-        var preview = document.getElementById('watermark-preview');
-        if (!preview) {
-            return;
         }
 
-        var file = this.files[0];
-        if (file) {
-            var reader = new FileReader();
-            reader.onload = function(e) {
-                preview.src = e.target.result;
-                preview.style.display = 'block';
-            };
-            reader.readAsDataURL(file);
-        }
-    }
-
-    /**
-     * Function to populate the watermark dropdown with available sets
-     */
-    function populateWatermarkDropdown(select, watermarkSets) {
-        if (!select || !watermarkSets) {
-            console.error('Watermarker: Cannot populate dropdown - missing select or watermarkSets');
-            return Promise.resolve();
-        }
-
-        return new Promise(function(resolve) {
-            // If dropdown is already populated and has at least as many options as we expect,
-            // don't repopulate it
-            const expectedOptions = watermarkSets.length + 2; // +2 for None and Default
-            const currentOptions = select.options.length;
-
-            if (currentOptions >= expectedOptions) {
-                console.log(`Watermarker: Dropdown already has ${currentOptions} options (expected ${expectedOptions}), skipping population`);
-                resolve();
+        function showMessage(message, type) {
+            // Find the closest field container
+            const fieldContainer = watermarkSelect.closest('.field');
+            if (!fieldContainer) {
+                console.error('Watermarker: Field container not found');
                 return;
             }
 
-            console.log('Watermarker: Populating dropdown with sets:', watermarkSets);
-
-            // Clear any existing options
-            select.innerHTML = '';
-
-            // Add "None" option
-            var noneOption = document.createElement('option');
-            noneOption.value = '';
-            noneOption.textContent = 'None (no watermark)';
-            select.appendChild(noneOption);
-
-            // Add "Default" option
-            var defaultOption = document.createElement('option');
-            defaultOption.value = 'default';
-            defaultOption.textContent = 'Default (inherit from parent)';
-            select.appendChild(defaultOption);
-
-            // Add watermark sets to dropdown
-            if (watermarkSets && watermarkSets.length > 0) {
-                watermarkSets.forEach(function(set) {
-                    var option = document.createElement('option');
-                    // Ensure value is a string
-                    option.value = set.id.toString();
-                    option.textContent = set.name;
-                    select.appendChild(option);
-                    console.log('Watermarker: Added option:', { value: option.value, text: option.textContent });
-                });
-            } else {
-                console.warn('Watermarker: No watermark sets to add to dropdown');
+            // Find the status element or create one if needed
+            let statusElement = fieldContainer.querySelector('.watermark-status');
+            if (!statusElement) {
+                statusElement = document.createElement('div');
+                statusElement.className = 'watermark-status';
+                watermarkSelect.parentNode.appendChild(statusElement);
             }
 
-            // Log the final state of the dropdown
-            console.log('Watermarker: Dropdown populated with options:',
-                Array.from(select.options).map(opt => ({ value: opt.value, text: opt.textContent, index: opt.index })));
+            // Update the status message
+            statusElement.textContent = message;
+            statusElement.className = `watermark-status ${type}`;
 
-            // Resolve the promise after dropdown is populated
-            resolve();
-        });
-    }
+            // Remove the message after 3 seconds
+            setTimeout(() => {
+                statusElement.textContent = '';
+                statusElement.className = 'watermark-status';
+            }, 3000);
+        }
+    });
 })();

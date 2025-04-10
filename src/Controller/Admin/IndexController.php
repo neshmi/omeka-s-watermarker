@@ -613,7 +613,7 @@ class IndexController extends AbstractActionController
                 ');
                 $stmt->execute([
                     $watermarkSetId,
-                    $explicitlyNoWatermark ? 1 : 0, // Convert boolean to integer
+                    $explicitlyNoWatermark ? 1 : 0,
                     $resourceType,
                     $resourceId
                 ]);
@@ -628,7 +628,7 @@ class IndexController extends AbstractActionController
                     $resourceType,
                     $resourceId,
                     $watermarkSetId,
-                    $explicitlyNoWatermark ? 1 : 0 // Convert boolean to integer
+                    $explicitlyNoWatermark ? 1 : 0
                 ]);
             }
 
