@@ -763,7 +763,13 @@ class Module extends AbstractModule
 
                 // Check if this is an image type we support
                 $mediaType = $media->mediaType();
-                if (!in_array($mediaType, ['image/jpeg', 'image/png', 'image/webp'])) {
+
+                // Get supported types from settings
+                $settings = $this->getServiceLocator()->get('Omeka\Settings');
+                $supportedTypesStr = $settings->get('supported_image_types', 'image/jpeg, image/png, image/webp, image/tiff, image/gif, image/bmp');
+                $supportedTypes = array_map('trim', explode(',', $supportedTypesStr));
+
+                if (!in_array($mediaType, $supportedTypes)) {
                     $logger->info(sprintf('Watermarker: Skipping unsupported media type: %s', $mediaType));
                     return;
                 }
@@ -1172,18 +1178,35 @@ class Module extends AbstractModule
                 return;
             }
 
-            if (!$settings->get('watermarker_apply_on_upload', true)) {
-                $logger->info('Watermarker: Auto-watermarking on upload disabled in settings');
-                return;
+            // Check if this is an import or upload
+            $isImport = $tempFile->getIngester() !== 'upload';
+            if ($isImport) {
+                if (!$settings->get('watermarker_apply_on_import', true)) {
+                    $logger->info('Watermarker: Auto-watermarking on import disabled in settings');
+                    return;
+                }
+            } else {
+                if (!$settings->get('watermarker_apply_on_upload', true)) {
+                    $logger->info('Watermarker: Auto-watermarking on upload disabled in settings');
+                    return;
+                }
             }
 
             // Check if this is an image
             $mediaType = $tempFile->getMediaType();
             $logger->info(sprintf('Watermarker: Media type from tempFile: %s', $mediaType));
 
-            if (!in_array($mediaType, ['image/jpeg', 'image/png', 'image/webp'])) {
-                $logger->info(sprintf('Watermarker: Not a supported image type: %s', $mediaType));
-                return;
+            // Check if media type is supported
+            $settings = $this->serviceLocator->get('Omeka\Settings');
+            $supportedTypesStr = $settings->get('supported_image_types', 'image/jpeg, image/png, image/webp, image/tiff, image/gif, image/bmp');
+            $supportedTypes = array_map('trim', explode(',', $supportedTypesStr));
+
+            if (!in_array($mediaType, $supportedTypes)) {
+                $this->logger->info(sprintf(
+                    'Watermarker: Skipping unsupported media type: %s',
+                    $mediaType
+                ));
+                return false;
             }
 
             // Check if getStoragePaths method exists

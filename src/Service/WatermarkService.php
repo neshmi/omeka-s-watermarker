@@ -318,25 +318,24 @@ class WatermarkService
             return false;
         }
 
+        // Get supported types from settings
+        $settings = $this->serviceLocator->get('Omeka\Settings');
+        $supportedTypesStr = $settings->get('supported_image_types', 'image/jpeg, image/png, image/webp, image/tiff, image/gif, image/bmp');
+
+        // Parse the comma-separated list, trimming whitespace
+        $supportedTypes = array_map('trim', explode(',', $supportedTypesStr));
+
         // Check if it's a supported image type
         $mediaType = $media->mediaType();
-        $supportedTypes = [
-            'image/jpeg',
-            'image/png',
-            'image/webp',
-        ];
-
-        $isSupported = in_array($mediaType, $supportedTypes);
-
-        if (!$isSupported) {
+        if (!in_array($mediaType, $supportedTypes)) {
             $this->logger->info(sprintf(
-                'Media ID %s has unsupported media type: %s',
-                $media->id(),
+                'Watermarker: Skipping unsupported media type: %s',
                 $mediaType
             ));
+            return false;
         }
 
-        return $isSupported;
+        return true;
     }
 
     /**
@@ -1335,6 +1334,18 @@ class WatermarkService
                 }
                 break;
 
+            case 'image/tiff':
+                // Try to load TIFF using imagecreatefromstring
+                $this->logger->info('Watermarker: Attempting to load TIFF image');
+                $img = @imagecreatefromstring(file_get_contents($file));
+                if ($img) {
+                    $this->logger->info('Watermarker: Successfully created TIFF image resource');
+                    return $img;
+                } else {
+                    $this->logger->err('Watermarker: Failed to create TIFF image resource');
+                }
+                break;
+
             default:
                 // Try generic approach for unsupported types
                 $this->logger->info(sprintf('Watermarker: Trying generic approach for unsupported media type: %s', $mediaType));
@@ -1373,7 +1384,7 @@ class WatermarkService
             // For PNG with transparency, we need to preserve that
             $hasAlpha = false;
             for ($x = 0; $x < imagesx($image) && !$hasAlpha; $x++) {
-                for ($y = 0; $y < imagesy($image) && !$hasAlpha; $y++) {
+                for ($y = 0; $y < imagesy($image); $y++) {
                     $color = imagecolorsforindex($image, imagecolorat($image, $x, $y));
                     if ($color['alpha'] > 0) {
                         $hasAlpha = true;

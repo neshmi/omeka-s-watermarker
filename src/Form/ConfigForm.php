@@ -52,6 +52,20 @@ class ConfigForm extends Form
             ],
         ]);
 
+        // Supported Image Types
+        $this->add([
+            'name' => 'supported_image_types',
+            'type' => Element\Text::class,
+            'options' => [
+                'label' => 'Supported Image Types',
+                'info' => 'Enter a comma-separated list of MIME types that can be watermarked (e.g. image/jpeg, image/png, image/tiff)',
+            ],
+            'attributes' => [
+                'id' => 'supported-image-types',
+                'value' => 'image/jpeg, image/png, image/webp, image/tiff, image/gif, image/bmp',
+            ],
+        ]);
+
         // Input filter for validation
         $inputFilter = $this->getInputFilter();
         $inputFilter->add([
@@ -64,6 +78,10 @@ class ConfigForm extends Form
         ]);
         $inputFilter->add([
             'name' => 'apply_on_import',
+            'required' => false,
+        ]);
+        $inputFilter->add([
+            'name' => 'supported_image_types',
             'required' => false,
         ]);
     }

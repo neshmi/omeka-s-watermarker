@@ -63,10 +63,17 @@ class WatermarkApplicator
             return false;
         }
 
-        // Check if media has image media type
+        // Check if media type is supported
+        $settings = $this->serviceLocator->get('Omeka\Settings');
+        $supportedTypesStr = $settings->get('supported_image_types', 'image/jpeg, image/png, image/webp, image/tiff, image/gif, image/bmp');
+        $supportedTypes = array_map('trim', explode(',', $supportedTypesStr));
+
         $mediaType = $media->mediaType();
-        if (!in_array($mediaType, ['image/jpeg', 'image/png', 'image/webp'])) {
-            $this->logger->info(sprintf('Watermarker: Skipping non-image media type: %s', $mediaType));
+        if (!in_array($mediaType, $supportedTypes)) {
+            $this->logger->info(sprintf(
+                'Watermarker: Skipping unsupported media type: %s',
+                $mediaType
+            ));
             return false;
         }
 

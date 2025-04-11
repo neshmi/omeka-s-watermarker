@@ -95,6 +95,11 @@ class WatermarkProcessor extends Command
         $logger = $this->serviceLocator->get('Omeka\Logger');
         $applicator = $this->serviceLocator->get('Watermarker\Service\WatermarkApplicator');
 
+        // Get supported types from settings
+        $settings = $this->serviceLocator->get('Omeka\Settings');
+        $supportedTypesStr = $settings->get('supported_image_types', 'image/jpeg, image/png, image/webp, image/tiff, image/gif, image/bmp');
+        $supportedTypes = array_map('trim', explode(',', $supportedTypesStr));
+
         // Process by specific media ID
         $mediaId = $input->getOption('media-id');
         if ($mediaId) {
@@ -212,11 +217,9 @@ class WatermarkProcessor extends Command
         $io->note(sprintf('Limit: %d, Offset: %d', $limit, $offset));
 
         try {
-            // Find media to process
+            // Build query to find media that needs watermarking
             $query = [
-                'limit' => $limit,
-                'offset' => $offset,
-                'media_type' => ['image/jpeg', 'image/png', 'image/webp'], // Only image types
+                'media_type' => $supportedTypes, // Use configured supported types
             ];
 
             $mediaList = $api->search('media', $query)->getContent();
